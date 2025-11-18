@@ -4,5 +4,6 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./config.yaml:/app/config.yaml
+      - ./config.yaml:/app/config.yml
+      - ./ct_index.json:/app/ct_index.json
     restart: unless-stopped
