@@ -1,0 +1,9 @@
+services:
+  certstream:
+    image: 0rickyy0/certstream-server-go
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./ct_index.json:/app/ct_index.json
+    restart: unless-stopped
