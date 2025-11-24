@@ -105,7 +105,7 @@ def check_godaddy_registrar(domain):
 # DISCORD ALERTING
 # ============================================================
 
-def send_discord_alert(domain, all_domains, source="certstream"):
+def send_discord_alert(domain, all_domains):
 
     # this should not happen, but just in case
     # and to fix type warning
@@ -115,7 +115,6 @@ def send_discord_alert(domain, all_domains, source="certstream"):
     
     content = (
         f"⚠ **CT Hit Detected**\n"
-        f"Source: `{source}`\n"
         f"Matched domain: `{domain}`\n"
         f"All domains in cert:\n" +
         "\n".join(f"- `{d}`" for d in all_domains)
@@ -180,24 +179,24 @@ def process_message(message_str):
             
             print(f"[+] Potential match: {domain}")
             
-            # Check for GoDaddy registrar (attacker indicator)
-            if check_godaddy_registrar(domain):
+            # Check for ALL THREE indicators:
+            # 1. GoDaddy registrar
+            # 2. Cloudflare nameservers
+            # 3. Multiple domains in the certificate (>1)
+            # All must be present to trigger alert (reduces false positives)
+            has_godaddy = check_godaddy_registrar(domain)
+            has_cloudflare = check_nameservers(domain)
+            has_multiple_domains = len(all_domains) > 1
+            
+            if has_godaddy and has_cloudflare and has_multiple_domains:
+                print(f"[!] ALERT: Domain has GoDaddy + Cloudflare + multiple domains ({len(all_domains)}): {domain}")
                 if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                     alerted_domains.clear()
                 alerted_domains.add(domain)
-                send_discord_alert(domain, all_domains, source="local-certstream")
-                continue
-            
-            # Check for Cloudflare nameservers (attacker indicator)
-            if check_nameservers(domain):
-                if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
-                    alerted_domains.clear()
-                alerted_domains.add(domain)
-                send_discord_alert(domain, all_domains, source="local-certstream")
-                continue
-            
-            # If neither indicator found, skip (likely legitimate)
-            print(f"[~] No attacker indicators found for {domain}, skipping alert")
+                send_discord_alert(domain, all_domains)
+            else:
+                # Skip if not all indicators present
+                print(f"[~] Skipping {domain} (GoDaddy: {has_godaddy}, Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
 
 
 # ============================================================
