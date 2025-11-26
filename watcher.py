@@ -201,6 +201,17 @@ def process_message(message_str):
 
     if not all_domains:
         return
+    
+    # Check certificate age - discard if older than 1 hour
+    not_before = leaf_cert.get("not_before")
+    if not_before:
+        try:
+            # not_before is a Unix timestamp
+            cert_age_seconds = time.time() - not_before
+            if cert_age_seconds > 3600:  # 1 hour in seconds
+                return  # Silently discard old certificates
+        except (ValueError, TypeError):
+            pass  # If timestamp parsing fails, continue processing
 
     # Update stats
     global cert_count, last_stats_time
