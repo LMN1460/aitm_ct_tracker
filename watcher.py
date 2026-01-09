@@ -6,6 +6,8 @@ import requests
 import websocket
 import time
 import subprocess
+import sys
+import traceback
 from urllib.parse import quote
 from dotenv import load_dotenv
 
@@ -47,6 +49,10 @@ target_mapping = {}
 
 # Email template (loaded from file)
 email_template = ""
+
+# Reconnection tracking
+reconnect_delay = 1
+max_reconnect_delay = 60
 
 
 # ============================================================
@@ -163,7 +169,10 @@ def check_nameservers(domain):
         if "cloudflare" in nameservers or "ns.cloudflare.com" in nameservers:
             print(f"[~] Cloudflare nameservers detected for {domain}, skipping alert")
             return True
-            
+    except subprocess.TimeoutExpired:
+        print(f"[!] Timeout checking nameservers for {domain}")
+    except FileNotFoundError:
+        print(f"[!] dig command not found, skipping nameserver check for {domain}")
     except Exception as e:
         print(f"[!] Error checking nameservers for {domain}: {e}")
     
@@ -192,7 +201,10 @@ def check_godaddy_registrar(domain):
         if "godaddy" in whois_output or "wild west domains" in whois_output:
             print(f"[~] GoDaddy registrar detected for {domain}, skipping alert")
             return True
-            
+    except subprocess.TimeoutExpired:
+        print(f"[!] Timeout checking whois for {domain}")
+    except FileNotFoundError:
+        print(f"[!] whois command not found, skipping registrar check for {domain}")
     except Exception as e:
         print(f"[!] Error checking whois for {domain}: {e}")
     
@@ -346,9 +358,14 @@ def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attack
     
     payload = {"embeds": [embed]}
 
-    resp = requests.post(DISCORD_WEBHOOK, json=payload)
-    if resp.status_code >= 300:
-        print(f"[!] Discord webhook error {resp.status_code}: {resp.text}")
+    try:
+        resp = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+        if resp.status_code >= 300:
+            print(f"[!] Discord webhook error {resp.status_code}: {resp.text}")
+    except requests.exceptions.Timeout:
+        print(f"[!] Discord webhook timeout for {domain}")
+    except requests.exceptions.RequestException as e:
+        print(f"[!] Discord webhook request failed for {domain}: {e}")
 
 
 # ============================================================
@@ -358,93 +375,102 @@ def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attack
 def process_message(message_str):
     """Process incoming CT log message from local certstream server."""
     try:
-        message = json.loads(message_str)
-    except json.JSONDecodeError:
-        return
-
-    msg_type = message.get("message_type")
-    if msg_type != "certificate_update":
-        return
-
-    data = message.get("data", {})
-    leaf_cert = data.get("leaf_cert", {})
-    all_domains = leaf_cert.get("all_domains", []) or []
-
-    if not all_domains:
-        return
-    
-    # Check certificate age - discard if older than 1 hour
-    not_before = leaf_cert.get("not_before")
-    if not_before:
         try:
-            # not_before is a Unix timestamp
-            cert_age_seconds = time.time() - not_before
-            if cert_age_seconds > 3600:  # 1 hour in seconds
-                return  # Silently discard old certificates
-        except (ValueError, TypeError):
-            pass  # If timestamp parsing fails, continue processing
+            message = json.loads(message_str)
+        except json.JSONDecodeError as e:
+            print(f"[!] JSON decode error: {e}")
+            return
 
-    # Update stats
-    global cert_count, last_stats_time
-    cert_count += 1
-    
-    # Print stats every 60 seconds
-    current_time = time.time()
-    if current_time - last_stats_time >= 60:
-        print(f"[*] Processed {cert_count} certificates in the last minute")
-        cert_count = 0
-        last_stats_time = current_time
+        msg_type = message.get("message_type")
+        if msg_type != "certificate_update":
+            return
 
-    global seen_domains, alerted_domains, known_attacker_domains
-    for d in all_domains:
-        domain = d.strip().lower()
+        data = message.get("data", {})
+        leaf_cert = data.get("leaf_cert", {})
+        all_domains = leaf_cert.get("all_domains", []) or []
 
-        # Dedupe certificate processing
-        if domain in seen_domains:
-            continue
-        if len(seen_domains) > SEEN_DOMAINS_LIMIT:
-            seen_domains.clear()
-        seen_domains.add(domain)
+        if not all_domains:
+            return
+        
+        # Check certificate age - discard if older than 1 hour
+        not_before = leaf_cert.get("not_before")
+        if not_before:
+            try:
+                # not_before is a Unix timestamp
+                cert_age_seconds = time.time() - not_before
+                if cert_age_seconds > 3600:  # 1 hour in seconds
+                    return  # Silently discard old certificates
+            except (ValueError, TypeError):
+                pass  # If timestamp parsing fails, continue processing
 
-        # Check for known attacker domains first (highest priority)
-        if is_known_attacker_domain(domain, known_attacker_domains):
-            # Check if already alerted
-            if domain in alerted_domains:
+        # Update stats
+        global cert_count, last_stats_time
+        cert_count += 1
+        
+        # Print stats every 60 seconds
+        current_time = time.time()
+        if current_time - last_stats_time >= 60:
+            print(f"[*] Processed {cert_count} certificates in the last minute")
+            cert_count = 0
+            last_stats_time = current_time
+
+        global seen_domains, alerted_domains, known_attacker_domains
+        for d in all_domains:
+            try:
+                domain = d.strip().lower()
+
+                # Dedupe certificate processing
+                if domain in seen_domains:
+                    continue
+                if len(seen_domains) > SEEN_DOMAINS_LIMIT:
+                    seen_domains.clear()
+                seen_domains.add(domain)
+
+                # Check for known attacker domains first (highest priority)
+                if is_known_attacker_domain(domain, known_attacker_domains):
+                    # Check if already alerted
+                    if domain in alerted_domains:
+                        continue
+                    
+                    print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain}")
+                    if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
+                        alerted_domains.clear()
+                    alerted_domains.add(domain)
+                    send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=True)
+                    continue
+
+                # Pattern match
+                if DOMAIN_REGEX.match(domain):
+                    # Check if already alerted
+                    if domain in alerted_domains:
+                        continue
+                    
+                    print(f"[+] Potential match: {domain}")
+                    
+                    # Check for ALL THREE indicators:
+                    # 1. GoDaddy registrar
+                    # 2. Cloudflare nameservers
+                    # 3. Multiple domains in the certificate (>1)
+                    # All must be present to trigger alert (reduces false positives)
+                    has_godaddy = check_godaddy_registrar(domain)
+                    has_cloudflare = check_nameservers(domain)
+                    has_multiple_domains = len(all_domains) > 1
+                    
+                    if has_godaddy and has_cloudflare and has_multiple_domains:
+                        print(f"[!] ALERT: Domain has GoDaddy + Cloudflare + multiple domains ({len(all_domains)}): {domain}")
+                        if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
+                            alerted_domains.clear()
+                        alerted_domains.add(domain)
+                        send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=False)
+                    else:
+                        # Skip if not all indicators present
+                        print(f"[~] Skipping {domain} (GoDaddy: {has_godaddy}, Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
+            except Exception as e:
+                print(f"[!] Error processing domain {d}: {e}")
                 continue
-            
-            print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain}")
-            if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
-                alerted_domains.clear()
-            alerted_domains.add(domain)
-            send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=True)
-            continue
-
-        # Pattern match
-        if DOMAIN_REGEX.match(domain):
-            # Check if already alerted
-            if domain in alerted_domains:
-                continue
-            
-            print(f"[+] Potential match: {domain}")
-            
-            # Check for ALL THREE indicators:
-            # 1. GoDaddy registrar
-            # 2. Cloudflare nameservers
-            # 3. Multiple domains in the certificate (>1)
-            # All must be present to trigger alert (reduces false positives)
-            has_godaddy = check_godaddy_registrar(domain)
-            has_cloudflare = check_nameservers(domain)
-            has_multiple_domains = len(all_domains) > 1
-            
-            if has_godaddy and has_cloudflare and has_multiple_domains:
-                print(f"[!] ALERT: Domain has GoDaddy + Cloudflare + multiple domains ({len(all_domains)}): {domain}")
-                if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
-                    alerted_domains.clear()
-                alerted_domains.add(domain)
-                send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=False)
-            else:
-                # Skip if not all indicators present
-                print(f"[~] Skipping {domain} (GoDaddy: {has_godaddy}, Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
+    except Exception as e:
+        print(f"[!] Error in process_message: {e}")
+        traceback.print_exc()
 
 
 # ============================================================
@@ -453,7 +479,11 @@ def process_message(message_str):
 
 def on_message(ws, message):
     """Handle incoming WebSocket messages."""
-    process_message(message)
+    try:
+        process_message(message)
+    except Exception as e:
+        print(f"[!] Unhandled error in on_message: {e}")
+        traceback.print_exc()
 
 
 def on_error(ws, error):
@@ -468,6 +498,8 @@ def on_close(ws, close_status_code, close_msg):
 
 def on_open(ws):
     """Handle WebSocket open."""
+    global reconnect_delay
+    reconnect_delay = 1  # Reset reconnect delay on successful connection
     print("[*] WebSocket connection established")
 
 
@@ -481,25 +513,46 @@ def main():
         raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
     
     # Load known attacker domains, targets, and email template
-    global known_attacker_domains, target_mapping, email_template
+    global known_attacker_domains, target_mapping, email_template, reconnect_delay
     known_attacker_domains = load_known_attacker_domains("known_domains.txt")
     target_mapping = load_target_mapping("targets.json")
     email_template = load_email_template("email_template.txt")
     
     print("[*] Starting CertStream watcher (local certstream-server-go)...")
-    print("[*] Connecting to ws://127.0.0.1:8080/ ...")
     
-    # Connect to local certstream-server-go instance
-    ws = websocket.WebSocketApp(
-        "ws://127.0.0.1:8080/",
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-        on_open=on_open
-    )
-    
-    # Run forever with auto-reconnect
-    ws.run_forever(ping_interval=30, ping_timeout=10)
+    # Main reconnection loop
+    while True:
+        try:
+            print(f"[*] Connecting to ws://127.0.0.1:8080/ ...")
+            
+            # Connect to local certstream-server-go instance
+            ws = websocket.WebSocketApp(
+                "ws://127.0.0.1:8080/",
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open
+            )
+            
+            # Run forever with auto-reconnect
+            ws.run_forever(ping_interval=30, ping_timeout=10)
+            
+            # If we get here, connection was closed
+            print(f"[*] Connection closed, reconnecting in {reconnect_delay} seconds...")
+            time.sleep(reconnect_delay)
+            
+            # Exponential backoff with max delay
+            reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+            
+        except KeyboardInterrupt:
+            print("\n[*] Shutting down gracefully...")
+            sys.exit(0)
+        except Exception as e:
+            print(f"[!] Unexpected error in main loop: {e}")
+            traceback.print_exc()
+            print(f"[*] Reconnecting in {reconnect_delay} seconds...")
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
 
 if __name__ == "__main__":
