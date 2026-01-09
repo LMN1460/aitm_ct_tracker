@@ -41,6 +41,47 @@ last_stats_time = time.time()
 # Known attacker domains (loaded from file)
 known_attacker_domains = set()
 
+# Target organizations mapping (loaded from JSON)
+target_mapping = {}
+
+
+# ============================================================
+# TARGET MAPPING
+# ============================================================
+
+def load_target_mapping(filepath="targets.json"):
+    """Load target organization mapping from JSON file.
+    Expected format: {"hex_id": {"name": "Org Name", "email": "email@example.com"}}
+    """
+    mapping = {}
+    if not os.path.exists(filepath):
+        print(f"[*] No targets file found at {filepath}")
+        return mapping
+    
+    try:
+        with open(filepath, 'r') as f:
+            mapping = json.load(f)
+        print(f"[*] Loaded {len(mapping)} target organizations")
+    except Exception as e:
+        print(f"[!] Error loading targets: {e}")
+    
+    return mapping
+
+
+def extract_hex_id(domain):
+    """Extract the hex ID from a domain matching our pattern.
+    Returns the hex ID (5 or 8 chars) or None if not found.
+    """
+    match = re.match(r"^api-([0-9a-fA-F]{5}|[0-9a-fA-F]{8})", domain, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
+def defang_domain(domain):
+    """Defang a domain by replacing dots with [.]"""
+    return domain.replace('.', '[.]')
+
 
 # ============================================================
 # KNOWN ATTACKER DOMAINS
@@ -158,7 +199,7 @@ def check_godaddy_registrar(domain):
 # DISCORD ALERTING
 # ============================================================
 
-def send_discord_alert(domain, all_domains):
+def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False):
 
     # this should not happen, but just in case
     # and to fix type warning
@@ -166,14 +207,80 @@ def send_discord_alert(domain, all_domains):
         print("[!] Discord webhook URL not set; cannot send alert.")
         return
     
-    content = (
-        f"⚠ **CT Hit Detected**\n"
-        f"Matched domain: `{domain}`\n"
-        f"All domains in cert:\n" +
-        "\n".join(f"- `{d}`" for d in all_domains)
-    )
-
-    payload = {"content": content[:2000]}  # Discord limit safeguard
+    # Extract hex ID and look up target info
+    hex_id = extract_hex_id(domain)
+    target_info = None
+    if hex_id and hex_id in target_mapping:
+        target_info = target_mapping[hex_id]
+    
+    # Calculate certificate freshness
+    freshness_str = "Unknown"
+    if cert_timestamp:
+        age_seconds = time.time() - cert_timestamp
+        if age_seconds < 60:
+            freshness_str = f"{int(age_seconds)} seconds"
+        elif age_seconds < 3600:
+            freshness_str = f"{int(age_seconds / 60)} minutes"
+        else:
+            freshness_str = f"{int(age_seconds / 3600)} hours"
+    
+    # Defang domains and format as code block
+    defanged_domains = [defang_domain(d) for d in all_domains]
+    domains_block = "\n".join(defanged_domains[:50])  # Limit to 50 domains
+    if len(all_domains) > 50:
+        domains_block += f"\n... and {len(all_domains) - 50} more"
+    
+    # Build embed
+    embed = {
+        "title": "🚨 Certificate Transparency Alert" if is_known_attacker else "⚠️ Potential Target Match",
+        "color": 0xFF0000 if is_known_attacker else 0xFFA500,  # Red for known attacker, orange for pattern match
+        "fields": [
+            {
+                "name": "Matched Domain",
+                "value": f"`{defang_domain(domain)}`",
+                "inline": False
+            },
+            {
+                "name": "Certificate Freshness",
+                "value": freshness_str,
+                "inline": True
+            },
+            {
+                "name": "Domain Count",
+                "value": str(len(all_domains)),
+                "inline": True
+            }
+        ],
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    }
+    
+    # Add target information if available
+    if target_info:
+        embed["fields"].insert(1, {
+            "name": "🎯 Target Organization",
+            "value": f"**{target_info['name']}**\nContact: {target_info['email']}",
+            "inline": False
+        })
+        embed["color"] = 0xFF0000  # Red for confirmed target
+    elif hex_id and not is_known_attacker:
+        embed["fields"].insert(1, {
+            "name": "Hex ID",
+            "value": f"`{hex_id}` (Unknown Target)",
+            "inline": False
+        })
+    
+    # Add alert type indicator
+    if is_known_attacker:
+        embed["description"] = "⚠️ **KNOWN ATTACKER DOMAIN DETECTED**"
+    
+    # Add all domains in code block
+    embed["fields"].append({
+        "name": "All Domains in Certificate",
+        "value": f"```\n{domains_block}\n```",
+        "inline": False
+    })
+    
+    payload = {"embeds": [embed]}
 
     resp = requests.post(DISCORD_WEBHOOK, json=payload)
     if resp.status_code >= 300:
@@ -245,7 +352,7 @@ def process_message(message_str):
             if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                 alerted_domains.clear()
             alerted_domains.add(domain)
-            send_discord_alert(domain, all_domains)
+            send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=True)
             continue
 
         # Pattern match
@@ -270,7 +377,7 @@ def process_message(message_str):
                 if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                     alerted_domains.clear()
                 alerted_domains.add(domain)
-                send_discord_alert(domain, all_domains)
+                send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=False)
             else:
                 # Skip if not all indicators present
                 print(f"[~] Skipping {domain} (GoDaddy: {has_godaddy}, Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
@@ -310,8 +417,9 @@ def main():
         raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
     
     # Load known attacker domains
-    global known_attacker_domains
+    global known_attacker_domains, target_mapping
     known_attacker_domains = load_known_attacker_domains("known_domains.txt")
+    target_mapping = load_target_mapping("targets.json")
     
     print("[*] Starting CertStream watcher (local certstream-server-go)...")
     print("[*] Connecting to ws://127.0.0.1:8080/ ...")
