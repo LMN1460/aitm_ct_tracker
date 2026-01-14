@@ -179,8 +179,8 @@ def check_nameservers(domain):
     return False
 
 
-def check_godaddy_registrar(domain):
-    """Check if domain is registered with GoDaddy via whois. Returns True if GoDaddy detected."""
+def get_domain_registrar(domain):
+    """Get the registrar for a domain via whois. Returns registrar name or None."""
     try:
         # Extract base domain
         parts = domain.split('.')
@@ -198,17 +198,36 @@ def check_godaddy_registrar(domain):
         )
         
         whois_output = result.stdout.lower()
+        
+        # Try to identify common registrars
         if "godaddy" in whois_output or "wild west domains" in whois_output:
-            print(f"[~] GoDaddy registrar detected for {domain}, skipping alert")
-            return True
+            return "GoDaddy"
+        elif "namecheap" in whois_output:
+            return "Namecheap"
+        elif "cloudflare" in whois_output:
+            return "Cloudflare"
+        elif "tucows" in whois_output:
+            return "Tucows"
+        elif "gandi" in whois_output:
+            return "Gandi"
+        elif "google" in whois_output:
+            return "Google Domains"
+        
+        # Try to extract registrar from common field
+        for line in result.stdout.split('\n'):
+            if 'registrar:' in line.lower():
+                registrar = line.split(':', 1)[1].strip()
+                return registrar if registrar else None
+        
+        return None
     except subprocess.TimeoutExpired:
         print(f"[!] Timeout checking whois for {domain}")
     except FileNotFoundError:
-        print(f"[!] whois command not found, skipping registrar check for {domain}")
+        print(f"[!] whois command not found, cannot get registrar for {domain}")
     except Exception as e:
         print(f"[!] Error checking whois for {domain}: {e}")
     
-    return False
+    return None
 
 
 # ============================================================
@@ -267,7 +286,7 @@ def generate_mailto_link(target_info, domain, all_domains, email_template, is_kn
     return mailto_url
 
 
-def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False):
+def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False, registrar=None):
 
     # this should not happen, but just in case
     # and to fix type warning
@@ -316,6 +335,11 @@ def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attack
             {
                 "name": "Domain Count",
                 "value": str(len(all_domains)),
+                "inline": True
+            },
+            {
+                "name": "Registrar",
+                "value": registrar if registrar else "Unknown",
                 "inline": True
             }
         ],
@@ -432,11 +456,13 @@ def process_message(message_str):
                     if domain in alerted_domains:
                         continue
                     
-                    print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain}")
+                    # Get registrar info for display purposes (non-blocking)
+                    registrar = get_domain_registrar(domain)
+                    print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain} (Registrar: {registrar})")
                     if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                         alerted_domains.clear()
                     alerted_domains.add(domain)
-                    send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=True)
+                    send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=True, registrar=registrar)
                     continue
 
                 # Pattern match
@@ -447,24 +473,24 @@ def process_message(message_str):
                     
                     print(f"[+] Potential match: {domain}")
                     
-                    # Check for ALL THREE indicators:
-                    # 1. GoDaddy registrar
-                    # 2. Cloudflare nameservers
-                    # 3. Multiple domains in the certificate (>1)
-                    # All must be present to trigger alert (reduces false positives)
-                    has_godaddy = check_godaddy_registrar(domain)
+                    # Check for TWO indicators:
+                    # 1. Cloudflare nameservers
+                    # 2. Multiple domains in the certificate (>1)
+                    # Both must be present to trigger alert (reduces false positives)
                     has_cloudflare = check_nameservers(domain)
                     has_multiple_domains = len(all_domains) > 1
                     
-                    if has_godaddy and has_cloudflare and has_multiple_domains:
-                        print(f"[!] ALERT: Domain has GoDaddy + Cloudflare + multiple domains ({len(all_domains)}): {domain}")
+                    if has_cloudflare and has_multiple_domains:
+                        # Get registrar info for display purposes (non-blocking)
+                        registrar = get_domain_registrar(domain)
+                        print(f"[!] ALERT: Domain has Cloudflare + multiple domains ({len(all_domains)}): {domain} (Registrar: {registrar})")
                         if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                             alerted_domains.clear()
                         alerted_domains.add(domain)
-                        send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=False)
+                        send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=False, registrar=registrar)
                     else:
                         # Skip if not all indicators present
-                        print(f"[~] Skipping {domain} (GoDaddy: {has_godaddy}, Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
+                        print(f"[~] Skipping {domain} (Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
             except Exception as e:
                 print(f"[!] Error processing domain {d}: {e}")
                 continue
