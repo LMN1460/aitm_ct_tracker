@@ -147,8 +147,8 @@ def is_known_attacker_domain(domain, known_domains):
 # DOMAIN CHECKS
 # ============================================================
 
-def check_nameservers(domain):
-    """Check if domain uses Cloudflare nameservers. Returns True if Cloudflare detected."""
+def get_nameservers(domain):
+    """Get nameservers for a domain. Returns tuple of (is_cloudflare, nameservers_list)."""
     try:
         # Extract base domain (e.g., ucsb.littlenuggetsco.com -> littlenuggetsco.com)
         parts = domain.split('.')
@@ -165,18 +165,28 @@ def check_nameservers(domain):
             timeout=5
         )
         
-        nameservers = result.stdout.lower()
-        if "cloudflare" in nameservers or "ns.cloudflare.com" in nameservers:
-            print(f"[~] Cloudflare nameservers detected for {domain}, skipping alert")
-            return True
+        nameservers_output = result.stdout.strip()
+        if not nameservers_output:
+            return (False, [])
+        
+        # Parse nameservers (one per line)
+        nameservers_list = [ns.strip().rstrip('.') for ns in nameservers_output.split('\n') if ns.strip()]
+        
+        # Check if Cloudflare
+        is_cloudflare = any(
+            "cloudflare" in ns.lower() or "ns.cloudflare.com" in ns.lower() 
+            for ns in nameservers_list
+        )
+        
+        return (is_cloudflare, nameservers_list)
     except subprocess.TimeoutExpired:
         print(f"[!] Timeout checking nameservers for {domain}")
     except FileNotFoundError:
-        print(f"[!] dig command not found, skipping nameserver check for {domain}")
+        print(f"[!] dig command not found, cannot get nameservers for {domain}")
     except Exception as e:
         print(f"[!] Error checking nameservers for {domain}: {e}")
     
-    return False
+    return (False, [])
 
 
 def get_domain_registrar(domain):
@@ -286,7 +296,7 @@ def generate_mailto_link(target_info, domain, all_domains, email_template, is_kn
     return mailto_url
 
 
-def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False, registrar=None):
+def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False, registrar=None, is_cloudflare=False, nameservers=None):
 
     # this should not happen, but just in case
     # and to fix type warning
@@ -345,6 +355,23 @@ def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attack
         ],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
     }
+    
+    # Add nameserver information
+    if nameservers is not None:
+        cloudflare_status = "✅ Yes" if is_cloudflare else "❌ No"
+        nameservers_str = "\n".join(nameservers) if nameservers else "Unable to retrieve"
+        
+        embed["fields"].append({
+            "name": "Cloudflare Nameservers",
+            "value": cloudflare_status,
+            "inline": True
+        })
+        
+        embed["fields"].append({
+            "name": "Nameservers",
+            "value": f"```\n{nameservers_str}\n```" if nameservers else "Unable to retrieve",
+            "inline": False
+        })
     
     # Add target information if available
     if target_info:
@@ -456,13 +483,22 @@ def process_message(message_str):
                     if domain in alerted_domains:
                         continue
                     
-                    # Get registrar info for display purposes (non-blocking)
+                    # Get nameserver and registrar info for display purposes
+                    is_cloudflare, nameservers_list = get_nameservers(domain)
                     registrar = get_domain_registrar(domain)
+                    
                     print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain} (Registrar: {registrar})")
                     if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                         alerted_domains.clear()
                     alerted_domains.add(domain)
-                    send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=True, registrar=registrar)
+                    send_discord_alert(
+                        domain, all_domains, 
+                        cert_timestamp=not_before, 
+                        is_known_attacker=True, 
+                        registrar=registrar,
+                        is_cloudflare=is_cloudflare,
+                        nameservers=nameservers_list
+                    )
                     continue
 
                 # Pattern match
@@ -473,24 +509,33 @@ def process_message(message_str):
                     
                     print(f"[+] Potential match: {domain}")
                     
-                    # Check for TWO indicators:
-                    # 1. Cloudflare nameservers
-                    # 2. Multiple domains in the certificate (>1)
-                    # Both must be present to trigger alert (reduces false positives)
-                    has_cloudflare = check_nameservers(domain)
+                    # Check if multiple domains in certificate (>1)
                     has_multiple_domains = len(all_domains) > 1
                     
-                    if has_cloudflare and has_multiple_domains:
+                    if has_multiple_domains:
+                        # Get nameserver info for display purposes
+                        is_cloudflare, nameservers_list = get_nameservers(domain)
+                        
                         # Get registrar info for display purposes (non-blocking)
                         registrar = get_domain_registrar(domain)
-                        print(f"[!] ALERT: Domain has Cloudflare + multiple domains ({len(all_domains)}): {domain} (Registrar: {registrar})")
+                        
+                        cf_status = "Cloudflare" if is_cloudflare else "Non-Cloudflare"
+                        print(f"[!] ALERT: Multiple domains ({len(all_domains)}), {cf_status} NS: {domain} (Registrar: {registrar})")
+                        
                         if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                             alerted_domains.clear()
                         alerted_domains.add(domain)
-                        send_discord_alert(domain, all_domains, cert_timestamp=not_before, is_known_attacker=False, registrar=registrar)
+                        send_discord_alert(
+                            domain, all_domains, 
+                            cert_timestamp=not_before, 
+                            is_known_attacker=False, 
+                            registrar=registrar,
+                            is_cloudflare=is_cloudflare,
+                            nameservers=nameservers_list
+                        )
                     else:
-                        # Skip if not all indicators present
-                        print(f"[~] Skipping {domain} (Cloudflare: {has_cloudflare}, Multi-domain: {has_multiple_domains})")
+                        # Skip if only single domain
+                        print(f"[~] Skipping {domain} (only single domain in certificate)")
             except Exception as e:
                 print(f"[!] Error processing domain {d}: {e}")
                 continue
