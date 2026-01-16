@@ -44,6 +44,7 @@ ALERTED_CERTIFICATES_LIMIT = 10000
 # Stats tracking
 cert_count = 0
 last_stats_time = time.time()
+total_alerts_count = 0
 
 # Known attacker domains (loaded from file)
 known_attacker_domains = set()
@@ -468,13 +469,14 @@ def process_message(message_str):
                 pass  # If timestamp parsing fails, continue processing
 
         # Update stats
-        global cert_count, last_stats_time
+        global cert_count, last_stats_time, total_alerts_count
         cert_count += 1
         
         # Print stats every 60 seconds
         current_time = time.time()
         if current_time - last_stats_time >= 60:
-            print(f"[*] Processed {cert_count} certificates in the last minute")
+            timestamp_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            print(f"[{timestamp_str}] Processed {cert_count} certificates in the last minute | Total alerts: {total_alerts_count}")
             cert_count = 0
             last_stats_time = current_time
 
@@ -521,6 +523,7 @@ def process_message(message_str):
                         is_cloudflare=is_cloudflare,
                         nameservers=nameservers_list
                     )
+                    total_alerts_count += 1
                     
                     # Skip processing other domains in this certificate
                     break
@@ -562,6 +565,7 @@ def process_message(message_str):
                             is_cloudflare=is_cloudflare,
                             nameservers=nameservers_list
                         )
+                        total_alerts_count += 1
                         
                         # Skip processing other domains in this certificate
                         break
