@@ -37,6 +37,10 @@ seen_domains = set()
 alerted_domains = set()
 ALERTED_DOMAINS_LIMIT = 10000
 
+# Track already alerted certificates to avoid duplicate notifications for same cert
+alerted_certificates = set()
+ALERTED_CERTIFICATES_LIMIT = 10000
+
 # Stats tracking
 cert_count = 0
 last_stats_time = time.time()
@@ -443,6 +447,15 @@ def process_message(message_str):
         if not all_domains:
             return
         
+        # Create a unique identifier for this certificate based on its domains
+        # Sort domains to ensure consistent hash regardless of order
+        cert_id = hash(tuple(sorted(d.strip().lower() for d in all_domains)))
+        
+        # Check if we've already alerted on this certificate
+        global alerted_certificates
+        if cert_id in alerted_certificates:
+            return  # Skip this certificate, already processed
+        
         # Check certificate age - discard if older than 1 hour
         not_before = leaf_cert.get("not_before")
         if not_before:
@@ -479,7 +492,7 @@ def process_message(message_str):
 
                 # Check for known attacker domains first (highest priority)
                 if is_known_attacker_domain(domain, known_attacker_domains):
-                    # Check if already alerted
+                    # Check if already alerted on this specific domain
                     if domain in alerted_domains:
                         continue
                     
@@ -488,9 +501,18 @@ def process_message(message_str):
                     registrar = get_domain_registrar(domain)
                     
                     print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain} (Registrar: {registrar})")
+                    
+                    # Mark this certificate as alerted to prevent duplicate alerts
+                    # on other subdomains in the same certificate
+                    if len(alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
+                        alerted_certificates.clear()
+                    alerted_certificates.add(cert_id)
+                    
+                    # Also track the specific domain
                     if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                         alerted_domains.clear()
                     alerted_domains.add(domain)
+                    
                     send_discord_alert(
                         domain, all_domains, 
                         cert_timestamp=not_before, 
@@ -499,7 +521,9 @@ def process_message(message_str):
                         is_cloudflare=is_cloudflare,
                         nameservers=nameservers_list
                     )
-                    continue
+                    
+                    # Skip processing other domains in this certificate
+                    break
 
                 # Pattern match
                 if DOMAIN_REGEX.match(domain):
@@ -522,6 +546,11 @@ def process_message(message_str):
                         cf_status = "Cloudflare" if is_cloudflare else "Non-Cloudflare"
                         print(f"[!] ALERT: Multiple domains ({len(all_domains)}), {cf_status} NS: {domain} (Registrar: {registrar})")
                         
+                        # Mark this certificate as alerted
+                        if len(alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
+                            alerted_certificates.clear()
+                        alerted_certificates.add(cert_id)
+                        
                         if len(alerted_domains) > ALERTED_DOMAINS_LIMIT:
                             alerted_domains.clear()
                         alerted_domains.add(domain)
@@ -533,6 +562,9 @@ def process_message(message_str):
                             is_cloudflare=is_cloudflare,
                             nameservers=nameservers_list
                         )
+                        
+                        # Skip processing other domains in this certificate
+                        break
                     else:
                         # Skip if only single domain
                         print(f"[~] Skipping {domain} (only single domain in certificate)")
