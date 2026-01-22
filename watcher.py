@@ -21,12 +21,15 @@ if not DISCORD_WEBHOOK:
     raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
 
 # Updated pattern to match:
-# Match api-<5 or 8 hex chars> but exclude known cloud/SaaS patterns
+# Match api-<ID> where:
+#   - 5-char IDs are alphanumeric (e.g., 3dse1 for RIT)
+#   - 8-char IDs are hex only (e.g., 529aed63 for UCSB)
+# Excludes known cloud/SaaS patterns
 # Examples:
-#   api-3dse1.rata.littlenuggetsco.com (RIT, shorter)
-#   api-529aed63.ucsb.littlenuggetsco.com (UCSB, standard)
+#   api-3dse1.riym.carbideintegration.com (RIT, 5-char alphanumeric)
+#   api-529aed63.ucsb.littlenuggetsco.com (UCSB, 8-char hex)
 DOMAIN_REGEX = re.compile(
-    r"^api-(?:[0-9a-fA-F]{5}|[0-9a-fA-F]{8})[\.\-](?!.*(?:upsolver\.com|ngrok\.|workers\.dev|multi\.software|huaweiclouds\.|amazonaws\.com|azure\.|googleusercontent\.com))",
+    r"^api-(?:[0-9a-zA-Z]{5}|[0-9a-fA-F]{8})[\.\-](?!.*(?:upsolver\.com|ngrok\.|workers\.dev|multi\.software|huaweiclouds\.|amazonaws\.com|azure\.|googleusercontent\.com))",
     re.IGNORECASE
 )
 
@@ -84,10 +87,11 @@ def load_target_mapping(filepath="targets.json"):
 
 
 def extract_hex_id(domain):
-    """Extract the hex ID from a domain matching our pattern.
-    Returns the hex ID (5 or 8 chars) or None if not found.
+    """Extract the ID from a domain matching our pattern.
+    Returns the ID (5-char alphanumeric or 8-char hex) or None if not found.
     """
-    match = re.match(r"^api-([0-9a-fA-F]{8}|[0-9a-fA-F]{5})", domain, re.IGNORECASE)
+    # Try 8-char hex first, then 5-char alphanumeric
+    match = re.match(r"^api-([0-9a-fA-F]{8}|[0-9a-zA-Z]{5})[\.\-]", domain, re.IGNORECASE)
     if match:
         return match.group(1).lower()
     return None
