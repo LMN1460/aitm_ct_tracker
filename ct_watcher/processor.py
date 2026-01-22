@@ -16,6 +16,7 @@ from .state import state
 from .domain_checks import is_known_attacker_domain, get_nameservers, get_domain_registrar
 from .ip_tracking import get_attacker_ips_for_domain
 from .discord import send_discord_alert
+from .utils import extract_target_id, is_common_word_id
 
 
 def _print_stats() -> None:
@@ -170,6 +171,12 @@ def process_message(message_str: str) -> None:
 
                 # Pattern match
                 if DOMAIN_REGEX.match(domain):
+                    # Extract the ID portion and check if it's a common word
+                    api_id = extract_target_id(domain)
+                    if api_id and is_common_word_id(api_id):
+                        # Skip common words like 'local', 'admin', 'store'
+                        continue
+                    
                     if _handle_pattern_match(domain, all_domains, cert_id, not_before):
                         break
                         

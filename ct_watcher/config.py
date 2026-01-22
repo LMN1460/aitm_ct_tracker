@@ -25,6 +25,57 @@ DOMAIN_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Regex to extract the ID portion from api-<ID> patterns
+API_ID_EXTRACT_REGEX = re.compile(r"^api-([0-9a-zA-Z]{5,8})[\.\-]", re.IGNORECASE)
+
+# Common English words (5 chars) that cause false positives
+# These are filtered out UNLESS they contain digits (which suggests intentional obfuscation)
+# Keep this list focused on words that appear in legitimate subdomains
+COMMON_WORDS_5CHAR = frozenset([
+    # Common subdomain prefixes
+    "admin", "local", "store", "stage", "stats", "proxy", "cache", "queue",
+    "media", "video", "audio", "image", "photo", "files", "asset", "share",
+    "cloud", "board", "delta", "alpha", "beta1", "gamma", "omega", "sigma",
+    "money", "forum", "login", "oauth", "token", "auth1", "guest", "users",
+    "order", "trade", "sales", "promo", "price", "stock", "brand", "hello",
+    "world", "react", "state", "redux", "query", "event", "alert", "point",
+    "track", "trace", "agent", "robot", "smart", "swift", "quick", "speed",
+    "power", "super", "ultra", "extra", "micro", "macro", "metro", "retro",
+    "cyber", "elite", "royal", "crown", "prime", "first", "fresh", "clean",
+    "clear", "white", "black", "green", "coral", "amber", "ivory", "pearl",
+    "stone", "spark", "flame", "blaze", "storm", "frost", "water", "ocean",
+    "river", "beach", "terra", "earth", "space", "lunar", "solar", "astro",
+    "north", "south", "inter", "intra", "outer", "inner", "upper", "lower",
+    "front", "panel", "table", "chart", "graph", "index", "batch", "chunk",
+    "block", "chain", "stack", "layer", "level", "floor", "tower", "plaza",
+    "house", "manor", "villa", "lodge", "hotel", "motel", "suite", "salon",
+    "berry", "apple", "grape", "lemon", "mango", "peach", "melon", "olive",
+    "maple", "cedar", "birch", "aspen", "tiger", "eagle", "horse", "mouse",
+    "pilot", "scout", "cadet", "watch", "guard", "safe1", "vault", "armor",
+    "draft", "cargo", "depot", "fleet", "drive", "motor", "wheel", "brake",
+    "craft", "build", "maker", "forge", "works", "mills", "light", "voice",
+    "sound", "music", "tempo", "radio", "pulse", "waves", "vibes", "beats",
+    # Tech/API terms
+    "debug", "print", "parse", "async", "await", "yield", "input", "setup",
+    "fetch", "posts", "items", "nodes", "edges", "links", "paths", "route",
+    "start", "begin", "ended", "close", "abort", "retry", "error", "catch",
+    # Common Korean/Spanish/etc transliterations that appear in domains
+    "movil", "nuevo", "final", "total", "grupo", "vista", "campo", "banco",
+])
+
+# 8-character common words/patterns to filter
+COMMON_WORDS_8CHAR = frozenset([
+    "internal", "external", "platform", "services", "endpoint", "frontend",
+    "backend1", "database", "security", "payments", "checkout", "accounts",
+    "settings", "profiles", "messages", "comments", "products", "category",
+    "customer", "merchant", "business", "personal", "standard", "premium1",
+    "workflow", "pipeline", "registry", "instance", "resource", "template",
+    "download", "uploading", "redirect", "callback", "webhooks", "triggers",
+    "schedule", "calendar", "bookmark", "favorite", "archives", "backups1",
+    "recovery", "validate", "verified", "approved", "accepted", "rejected",
+    "complete", "progress", "pending1", "queued01", "process1", "handling",
+])
+
 # Deduplication limits
 SEEN_DOMAINS_LIMIT = 10000
 ALERTED_DOMAINS_LIMIT = 10000
