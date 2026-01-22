@@ -8,6 +8,7 @@ import time
 import subprocess
 import sys
 import traceback
+import ipaddress
 from urllib.parse import quote
 from dotenv import load_dotenv
 
@@ -61,6 +62,41 @@ email_template = ""
 # Reconnection tracking
 reconnect_delay = 1
 max_reconnect_delay = 60
+
+# Attacker IP tracking file
+ATTACKER_IPS_FILE = "attacker_ips.json"
+attacker_ips_data = {"ips": {}, "last_updated": None}
+
+# Known CDN/Cloud IP ranges to exclude from IOCs
+# These should not be suggested for blocking
+CDN_RANGES = [
+    # Cloudflare IPv4
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+    "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    # Fastly
+    "23.235.32.0/20", "43.249.72.0/22", "103.244.50.0/24", "103.245.222.0/23",
+    "103.245.224.0/24", "104.156.80.0/20", "140.248.64.0/18", "140.248.128.0/17",
+    "146.75.0.0/17", "151.101.0.0/16", "157.52.64.0/18", "167.82.0.0/17",
+    "167.82.128.0/20", "167.82.160.0/20", "167.82.224.0/20", "172.111.64.0/18",
+    "185.31.16.0/22", "199.27.72.0/21", "199.232.0.0/16",
+    # Akamai (partial - major ranges)
+    "23.0.0.0/12", "104.64.0.0/10",
+    # Amazon CloudFront (partial)
+    "13.32.0.0/15", "13.35.0.0/16", "13.224.0.0/14", "52.84.0.0/15",
+    "54.182.0.0/16", "54.192.0.0/16", "54.230.0.0/16", "54.239.128.0/18",
+    "54.239.192.0/19", "70.132.0.0/18", "99.84.0.0/16", "143.204.0.0/16",
+    "204.246.164.0/22", "204.246.168.0/22", "205.251.192.0/19", "216.137.32.0/19",
+]
+
+# Parse CDN ranges into network objects for efficient lookup
+cdn_networks = []
+for cidr in CDN_RANGES:
+    try:
+        cdn_networks.append(ipaddress.ip_network(cidr))
+    except ValueError:
+        pass
 
 
 # ============================================================
@@ -198,6 +234,112 @@ def get_nameservers(domain):
     return (False, [])
 
 
+def is_cdn_ip(ip_str):
+    """Check if an IP address belongs to a known CDN/cloud provider."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        for network in cdn_networks:
+            if ip in network:
+                return True
+    except ValueError:
+        pass
+    return False
+
+
+def resolve_domain_ip(domain):
+    """Resolve a domain to its IP address(es). Returns list of non-CDN IPs."""
+    ips = []
+    try:
+        # Get all A records
+        result = subprocess.run(
+            ["dig", "+short", "A", domain],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        for line in result.stdout.strip().split('\n'):
+            ip = line.strip()
+            if ip and re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                ips.append(ip)
+    except subprocess.TimeoutExpired:
+        print(f"[!] Timeout resolving IP for {domain}")
+    except Exception as e:
+        print(f"[!] Error resolving IP for {domain}: {e}")
+    
+    return ips
+
+
+def load_attacker_ips(filepath=ATTACKER_IPS_FILE):
+    """Load attacker IPs from JSON file."""
+    global attacker_ips_data
+    if not os.path.exists(filepath):
+        attacker_ips_data = {"ips": {}, "last_updated": None}
+        return attacker_ips_data
+    
+    try:
+        with open(filepath, 'r') as f:
+            attacker_ips_data = json.load(f)
+        print(f"[*] Loaded {len(attacker_ips_data.get('ips', {}))} tracked attacker IPs")
+    except Exception as e:
+        print(f"[!] Error loading attacker IPs: {e}")
+        attacker_ips_data = {"ips": {}, "last_updated": None}
+    
+    return attacker_ips_data
+
+
+def save_attacker_ips(filepath=ATTACKER_IPS_FILE):
+    """Save attacker IPs to JSON file."""
+    global attacker_ips_data
+    try:
+        attacker_ips_data["last_updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(filepath, 'w') as f:
+            json.dump(attacker_ips_data, f, indent=2)
+    except Exception as e:
+        print(f"[!] Error saving attacker IPs: {e}")
+
+
+def track_attacker_ip(ip, domain, is_cdn=False):
+    """Track an attacker IP address with associated domain."""
+    global attacker_ips_data
+    
+    if ip not in attacker_ips_data["ips"]:
+        attacker_ips_data["ips"][ip] = {
+            "first_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "last_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "domains": [domain],
+            "is_cdn": is_cdn,
+            "count": 1
+        }
+        print(f"[+] New attacker IP tracked: {ip} {'(CDN)' if is_cdn else ''}")
+    else:
+        entry = attacker_ips_data["ips"][ip]
+        entry["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        entry["count"] += 1
+        if domain not in entry["domains"]:
+            entry["domains"].append(domain)
+            # Keep only last 50 domains per IP
+            if len(entry["domains"]) > 50:
+                entry["domains"] = entry["domains"][-50:]
+    
+    # Save periodically (every update for now, could optimize)
+    save_attacker_ips()
+
+
+def get_attacker_ips_for_domain(domain):
+    """Resolve domain and track IPs. Returns tuple of (all_ips, non_cdn_ips)."""
+    all_ips = resolve_domain_ip(domain)
+    non_cdn_ips = []
+    
+    for ip in all_ips:
+        is_cdn = is_cdn_ip(ip)
+        track_attacker_ip(ip, domain, is_cdn)
+        if not is_cdn:
+            non_cdn_ips.append(ip)
+    
+    return (all_ips, non_cdn_ips)
+
+
 def get_domain_registrar(domain):
     """Get the registrar for a domain via whois. Returns registrar name or None."""
     try:
@@ -278,7 +420,7 @@ Regards"""
         return default_template
 
 
-def generate_mailto_link(target_info, domain, all_domains, email_template, is_known_attacker=False):
+def generate_mailto_link(target_info, domain, all_domains, email_template, is_known_attacker=False, non_cdn_ips=None):
     """Generate a mailto link with pre-filled threat intel email."""
     # Determine recipient email and org name
     if target_info:
@@ -291,10 +433,17 @@ def generate_mailto_link(target_info, domain, all_domains, email_template, is_kn
     # Build subject
     subject = f"[Threat Intel] Phishing infrastructure detected targeting {org_name}"
     
-    # Build IOCs list (defanged)
+    # Build IOCs list (defanged domains)
     iocs_list = "\r\n".join([defang_domain(d) for d in all_domains[:50]])
     if len(all_domains) > 50:
         iocs_list += f"\r\n... and {len(all_domains) - 50} more domains"
+    
+    # Add non-CDN IPs to IOCs (these are safe to block)
+    if non_cdn_ips:
+        iocs_list += "\r\n\r\nIP Addresses:\r\n"
+        iocs_list += "\r\n".join(non_cdn_ips[:20])
+        if len(non_cdn_ips) > 20:
+            iocs_list += f"\r\n... and {len(non_cdn_ips) - 20} more IPs"
     
     # Build email body from template
     body = email_template.replace("{IOCS_LIST}", iocs_list)
@@ -305,7 +454,7 @@ def generate_mailto_link(target_info, domain, all_domains, email_template, is_kn
     return mailto_url
 
 
-def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False, registrar=None, is_cloudflare=False, nameservers=None):
+def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attacker=False, registrar=None, is_cloudflare=False, nameservers=None, all_ips=None, non_cdn_ips=None):
 
     # this should not happen, but just in case
     # and to fix type warning
@@ -401,6 +550,40 @@ def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attack
     if is_known_attacker:
         embed["description"] = "⚠️ **KNOWN ATTACKER DOMAIN DETECTED**"
     
+    # Add IP address information
+    if all_ips:
+        # Format IPs, marking CDN ones
+        ip_lines = []
+        for ip in all_ips[:10]:  # Limit to 10 IPs
+            if non_cdn_ips and ip in non_cdn_ips:
+                ip_lines.append(f"{ip} ✅ (blockable)")
+            else:
+                ip_lines.append(f"{ip} ⚠️ (CDN - do not block)")
+        
+        ip_block = "\n".join(ip_lines)
+        if len(all_ips) > 10:
+            ip_block += f"\n... and {len(all_ips) - 10} more"
+        
+        embed["fields"].append({
+            "name": "🌐 IP Addresses",
+            "value": f"```\n{ip_block}\n```",
+            "inline": False
+        })
+        
+        # Summary of blockable IPs
+        if non_cdn_ips:
+            embed["fields"].append({
+                "name": "Blockable IPs",
+                "value": f"`{len(non_cdn_ips)}` non-CDN IPs safe to block",
+                "inline": True
+            })
+        else:
+            embed["fields"].append({
+                "name": "⚠️ CDN Warning",
+                "value": "All IPs are CDN - do not block!",
+                "inline": True
+            })
+    
     # Add all domains in code block
     embed["fields"].append({
         "name": "All Domains in Certificate",
@@ -409,7 +592,7 @@ def send_discord_alert(domain, all_domains, cert_timestamp=None, is_known_attack
     })
     
     # Add mailto link for one-click email
-    mailto_link = generate_mailto_link(target_info, domain, all_domains, email_template, is_known_attacker)
+    mailto_link = generate_mailto_link(target_info, domain, all_domains, email_template, is_known_attacker, non_cdn_ips)
     embed["fields"].append({
         "name": "📧 Send Notification",
         "value": f"[Click here to send threat intel email]({mailto_link})",
@@ -506,7 +689,10 @@ def process_message(message_str):
                     is_cloudflare, nameservers_list = get_nameservers(domain)
                     registrar = get_domain_registrar(domain)
                     
-                    print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain} (Registrar: {registrar})")
+                    # Resolve and track IP addresses
+                    all_ips, non_cdn_ips = get_attacker_ips_for_domain(domain)
+                    
+                    print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain} (Registrar: {registrar}, IPs: {len(all_ips)}, Blockable: {len(non_cdn_ips)})")
                     
                     # Mark this certificate as alerted to prevent duplicate alerts
                     # on other subdomains in the same certificate
@@ -525,7 +711,9 @@ def process_message(message_str):
                         is_known_attacker=True, 
                         registrar=registrar,
                         is_cloudflare=is_cloudflare,
-                        nameservers=nameservers_list
+                        nameservers=nameservers_list,
+                        all_ips=all_ips,
+                        non_cdn_ips=non_cdn_ips
                     )
                     total_alerts_count += 1
                     
@@ -550,8 +738,11 @@ def process_message(message_str):
                         # Get registrar info for display purposes (non-blocking)
                         registrar = get_domain_registrar(domain)
                         
+                        # Resolve and track IP addresses
+                        all_ips, non_cdn_ips = get_attacker_ips_for_domain(domain)
+                        
                         cf_status = "Cloudflare" if is_cloudflare else "Non-Cloudflare"
-                        print(f"[!] ALERT: Multiple domains ({len(all_domains)}), {cf_status} NS: {domain} (Registrar: {registrar})")
+                        print(f"[!] ALERT: Multiple domains ({len(all_domains)}), {cf_status} NS: {domain} (Registrar: {registrar}, IPs: {len(all_ips)}, Blockable: {len(non_cdn_ips)})")
                         
                         # Mark this certificate as alerted
                         if len(alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
@@ -567,7 +758,9 @@ def process_message(message_str):
                             is_known_attacker=False, 
                             registrar=registrar,
                             is_cloudflare=is_cloudflare,
-                            nameservers=nameservers_list
+                            nameservers=nameservers_list,
+                            all_ips=all_ips,
+                            non_cdn_ips=non_cdn_ips
                         )
                         total_alerts_count += 1
                         
@@ -623,11 +816,12 @@ def main():
         print("[!] Discord webhook URL not set; cannot send alert.")
         raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
     
-    # Load known attacker domains, targets, and email template
-    global known_attacker_domains, target_mapping, email_template, reconnect_delay
+    # Load known attacker domains, targets, email template, and tracked IPs
+    global known_attacker_domains, target_mapping, email_template, reconnect_delay, attacker_ips_data
     known_attacker_domains = load_known_attacker_domains("known_domains.txt")
     target_mapping = load_target_mapping("targets.json")
     email_template = load_email_template("email_template.txt")
+    attacker_ips_data = load_attacker_ips(ATTACKER_IPS_FILE)
     
     print("[*] Starting CertStream watcher (local certstream-server-go)...")
     

@@ -5,3 +5,4 @@ ct_index.json
 known_domains.txt
 targets.json
 email_template.txt
+attacker_ips.json
