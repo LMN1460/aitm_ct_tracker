@@ -5,7 +5,7 @@ import requests
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote
 
-from .config import DISCORD_WEBHOOK
+from .config import DISCORD_WEBHOOK, SECOND_DISCORD_WEBHOOK
 from .state import state
 from .utils import defang_domain, extract_target_id
 
@@ -192,11 +192,23 @@ def send_discord_alert(
     is_cloudflare: bool = False,
     nameservers: Optional[List[str]] = None,
     all_ips: Optional[List[str]] = None,
-    non_cdn_ips: Optional[List[str]] = None
+    non_cdn_ips: Optional[List[str]] = None,
+    high_confidence: bool = True
 ) -> None:
-    """Send alert to Discord webhook."""
+    """Send alert to Discord webhook.
     
-    if not DISCORD_WEBHOOK:
+    Args:
+        high_confidence: If True, sends to main webhook. If False, sends to
+                        second webhook (for manual review) with notifications suppressed.
+    """
+    # Choose webhook based on confidence level
+    if high_confidence:
+        webhook_url = DISCORD_WEBHOOK
+    else:
+        # Use second webhook for low-confidence alerts, fall back to main if not set
+        webhook_url = SECOND_DISCORD_WEBHOOK or DISCORD_WEBHOOK
+    
+    if not webhook_url:
         print("[!] Discord webhook URL not set; cannot send alert.")
         return
     
@@ -205,10 +217,20 @@ def send_discord_alert(
         registrar, is_cloudflare, nameservers, all_ips, non_cdn_ips
     )
     
-    payload = {"embeds": [embed]}
+    # Mark low-confidence alerts visually
+    if not high_confidence:
+        embed["title"] = "🔍 Manual Review: " + embed.get("title", "Alert")
+        embed["color"] = 0x808080  # Gray for low confidence
+        embed["footer"] = {"text": "Low confidence - manual review required"}
+    
+    payload: Dict[str, Any] = {"embeds": [embed]}
+    
+    # Suppress notifications for low-confidence alerts
+    if not high_confidence:
+        payload["flags"] = 4096  # SUPPRESS_NOTIFICATIONS flag
 
     try:
-        resp = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+        resp = requests.post(webhook_url, json=payload, timeout=10)
         if resp.status_code >= 300:
             print(f"[!] Discord webhook error {resp.status_code}: {resp.text}")
     except requests.exceptions.Timeout:

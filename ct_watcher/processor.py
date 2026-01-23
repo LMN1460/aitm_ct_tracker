@@ -11,12 +11,21 @@ from .config import (
     ALERTED_DOMAINS_LIMIT,
     ALERTED_CERTIFICATES_LIMIT,
     MAX_CERT_AGE_SECONDS,
+    HIGH_CONFIDENCE_REGISTRARS,
 )
 from .state import state
 from .domain_checks import is_known_attacker_domain, get_nameservers, get_domain_registrar
 from .ip_tracking import get_attacker_ips_for_domain
 from .discord import send_discord_alert
 from .utils import extract_target_id, is_common_word_id
+
+
+def _is_high_confidence_registrar(registrar: str | None) -> bool:
+    """Check if the registrar is in the high-confidence list."""
+    if not registrar:
+        return False
+    registrar_lower = registrar.lower()
+    return any(hc in registrar_lower for hc in HIGH_CONFIDENCE_REGISTRARS)
 
 
 def _print_stats() -> None:
@@ -51,6 +60,7 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
         state.clear_alerted_domains()
     state.alerted_domains.add(domain)
     
+    # Known attacker domains are always high confidence
     send_discord_alert(
         domain, all_domains,
         cert_timestamp=not_before,
@@ -59,7 +69,8 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
         is_cloudflare=is_cloudflare,
         nameservers=nameservers_list,
         all_ips=all_ips,
-        non_cdn_ips=non_cdn_ips
+        non_cdn_ips=non_cdn_ips,
+        high_confidence=True
     )
     state.total_alerts_count += 1
     return True
@@ -84,8 +95,28 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
     # Resolve and track IP addresses
     all_ips, non_cdn_ips = get_attacker_ips_for_domain(domain)
     
+    # Determine confidence level
+    # High confidence if:
+    # 1. The extracted ID matches a known target
+    # 2. The registrar is GoDaddy/Namecheap (commonly used by attackers)
+    # 3. The ID is 8 chars (hex) - more specific pattern
+    api_id = extract_target_id(domain)
+    is_known_target = api_id and api_id in state.target_mapping
+    is_suspicious_registrar = _is_high_confidence_registrar(registrar)
+    is_8char_hex = api_id and len(api_id) == 8
+    
+    high_confidence = bool(is_known_target or is_suspicious_registrar or is_8char_hex)
+    
+    confidence_str = "HIGH" if high_confidence else "LOW"
     cf_status = "Cloudflare" if is_cloudflare else "Non-Cloudflare"
-    print(f"[!] ALERT: Multiple domains ({len(all_domains)}), {cf_status} NS: {domain} (Registrar: {registrar}, IPs: {len(all_ips)}, Blockable: {len(non_cdn_ips)})")
+    print(f"[!] ALERT [{confidence_str}]: Multiple domains ({len(all_domains)}), {cf_status} NS: {domain} (Registrar: {registrar}, IPs: {len(all_ips)}, Blockable: {len(non_cdn_ips)})")
+    
+    if is_known_target and api_id:
+        print(f"    -> Known target: {state.target_mapping[api_id]['name']}")
+    if is_suspicious_registrar:
+        print(f"    -> Suspicious registrar: {registrar}")
+    if is_8char_hex:
+        print(f"    -> 8-char hex ID: {api_id}")
     
     # Mark as alerted
     if len(state.alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
@@ -104,7 +135,8 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
         is_cloudflare=is_cloudflare,
         nameservers=nameservers_list,
         all_ips=all_ips,
-        non_cdn_ips=non_cdn_ips
+        non_cdn_ips=non_cdn_ips,
+        high_confidence=high_confidence
     )
     state.total_alerts_count += 1
     return True

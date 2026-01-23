@@ -8,10 +8,20 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Discord webhook URL (required)
+# Discord webhook URL (required) - for high-confidence alerts
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 if not DISCORD_WEBHOOK:
     raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
+
+# Second Discord webhook (optional) - for low-confidence alerts (manual review)
+# These alerts are sent without @mentions/notifications
+SECOND_DISCORD_WEBHOOK = os.environ.get("SECOND_DISCORD_WEBHOOK")
+
+# Registrars that indicate high confidence (commonly used by attackers)
+HIGH_CONFIDENCE_REGISTRARS = frozenset([
+    "godaddy",
+    "namecheap",
+])
 
 # Domain pattern matching
 # Match api-<ID>. where:
