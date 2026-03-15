@@ -1,6 +1,7 @@
 """Discord alerting for CT Watcher."""
 
 import time
+from datetime import datetime, timezone
 import requests
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote
@@ -58,7 +59,8 @@ def build_embed(
     is_cloudflare: bool = False,
     nameservers: Optional[List[str]] = None,
     all_ips: Optional[List[str]] = None,
-    non_cdn_ips: Optional[List[str]] = None
+    non_cdn_ips: Optional[List[str]] = None,
+    reg_date: Optional[str] = None
 ) -> Dict[str, Any]:
     """Build Discord embed for alert."""
     
@@ -93,10 +95,32 @@ def build_embed(
             {"name": "Matched Domain", "value": f"`{defang_domain(domain)}`", "inline": False},
             {"name": "Certificate Freshness", "value": freshness_str, "inline": True},
             {"name": "Domain Count", "value": str(len(all_domains)), "inline": True},
-            {"name": "Registrar", "value": registrar if registrar else "Unknown", "inline": True}
+            {"name": "Registrar", "value": registrar if registrar else "Unknown", "inline": True},
         ],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
     }
+
+    # Add domain registration date field if available
+    if reg_date:
+        try:
+            reg_dt = datetime.fromisoformat(reg_date)
+            if reg_dt.tzinfo is None:
+                reg_dt = reg_dt.replace(tzinfo=timezone.utc)
+            days_old = (datetime.now(timezone.utc) - reg_dt).days
+            reg_date_display = f"{reg_date} ({days_old} days old)"
+        except Exception:
+            reg_date_display = reg_date
+        embed["fields"].append({
+            "name": "📅 Domain Registered",
+            "value": reg_date_display,
+            "inline": True
+        })
+    else:
+        embed["fields"].append({
+            "name": "📅 Domain Registered",
+            "value": "Unknown (RDAP unavailable)",
+            "inline": True
+        })
     
     # Add nameserver information
     if nameservers is not None:
@@ -193,7 +217,8 @@ def send_discord_alert(
     nameservers: Optional[List[str]] = None,
     all_ips: Optional[List[str]] = None,
     non_cdn_ips: Optional[List[str]] = None,
-    high_confidence: bool = True
+    high_confidence: bool = True,
+    reg_date: Optional[str] = None
 ) -> None:
     """Send alert to Discord webhook.
     
@@ -214,7 +239,7 @@ def send_discord_alert(
     
     embed = build_embed(
         domain, all_domains, cert_timestamp, is_known_attacker,
-        registrar, is_cloudflare, nameservers, all_ips, non_cdn_ips
+        registrar, is_cloudflare, nameservers, all_ips, non_cdn_ips, reg_date
     )
     
     # Mark low-confidence alerts visually

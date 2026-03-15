@@ -15,6 +15,7 @@ from .config import (
 )
 from .state import state
 from .domain_checks import is_known_attacker_domain, get_nameservers, get_domain_registrar
+from .domain_checks import is_known_attacker_domain, get_nameservers, get_domain_info
 from .ip_tracking import get_attacker_ips_for_domain
 from .discord import send_discord_alert
 from .utils import extract_target_id, is_common_word_id
@@ -44,7 +45,7 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
     
     # Get nameserver and registrar info
     is_cloudflare, nameservers_list = get_nameservers(domain)
-    registrar = get_domain_registrar(domain)
+    registrar, reg_date = get_domain_info(domain)
     
     # Resolve and track IP addresses
     all_ips, non_cdn_ips = get_attacker_ips_for_domain(domain)
@@ -70,7 +71,8 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
         nameservers=nameservers_list,
         all_ips=all_ips,
         non_cdn_ips=non_cdn_ips,
-        high_confidence=True
+        high_confidence=True,
+        reg_date=reg_date
     )
     state.total_alerts_count += 1
     return True
@@ -90,7 +92,7 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
     
     # Get nameserver and registrar info
     is_cloudflare, nameservers_list = get_nameservers(domain)
-    registrar = get_domain_registrar(domain)
+    registrar, reg_date = get_domain_info(domain)
     
     # Resolve and track IP addresses
     all_ips, non_cdn_ips = get_attacker_ips_for_domain(domain)
@@ -141,7 +143,8 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
         nameservers=nameservers_list,
         all_ips=all_ips,
         non_cdn_ips=non_cdn_ips,
-        high_confidence=high_confidence
+        high_confidence=high_confidence,
+        reg_date=reg_date
     )
     state.total_alerts_count += 1
     return True

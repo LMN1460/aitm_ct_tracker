@@ -2,8 +2,29 @@
 
 import subprocess
 from typing import List, Set, Tuple
+import time
+import whoisit
+from typing import Dict, List, Optional, Set, Tuple
 
 from .utils import get_base_domain
+
+
+# RDAP bootstrap state and cache
+_rdap_bootstrapped = False
+_rdap_cache: Dict[str, tuple] = {}  # base_domain -> (registrar, reg_date, timestamp)
+_RDAP_CACHE_TTL = 3600  # 1 hour
+
+
+def _ensure_rdap_bootstrapped() -> bool:
+    global _rdap_bootstrapped
+    if not _rdap_bootstrapped:
+        try:
+            whoisit.bootstrap()
+            _rdap_bootstrapped = True
+        except Exception as e:
+            print(f"[!] RDAP bootstrap failed: {e}")
+            return False
+    return True
 
 
 def is_known_attacker_domain(domain: str, known_domains: Set[str]) -> bool:
@@ -113,5 +134,51 @@ def get_domain_registrar(domain: str) -> str | None:
         print(f"[!] whois command not found, cannot get registrar for {domain}")
     except Exception as e:
         print(f"[!] Error checking whois for {domain}: {e}")
-    
+
+
     return None
+
+
+def get_domain_info(domain: str) -> tuple:
+    """Get registrar and registration date for a domain.
+
+    Tries RDAP first (structured JSON), falls back to WHOIS for unsupported TLDs.
+    Results are cached for 1 hour to avoid rate limits.
+
+    Returns:
+        (registrar, reg_date) where reg_date is 'YYYY-MM-DD' string or None.
+    """
+    base_domain = get_base_domain(domain)
+
+    # Check cache
+    now = time.time()
+    if base_domain in _rdap_cache:
+        registrar, reg_date, cached_at = _rdap_cache[base_domain]
+        if now - cached_at < _RDAP_CACHE_TTL:
+            return (registrar, reg_date)
+
+    registrar = None
+    reg_date = None
+
+    # Try RDAP first
+    try:
+        if _ensure_rdap_bootstrapped():
+            result = whoisit.domain(base_domain)
+
+            # Registrar lives under entities['registrar'][0]['name']
+            entities = result.get('entities', {})
+            reg_entities = entities.get('registrar', [])
+            if reg_entities and reg_entities[0].get('name'):
+                registrar = reg_entities[0]['name']
+
+            # Registration date
+            rd = result.get('registration_date')
+            if rd:
+                reg_date = rd.strftime('%Y-%m-%d') if hasattr(rd, 'strftime') else str(rd)[:10]
+    except Exception as e:
+        print(f"[~] RDAP lookup failed for {base_domain} ({e}), trying WHOIS")
+        # Fall back to WHOIS for registrar (no reg date available from WHOIS)
+        registrar = get_domain_registrar(domain)
+
+    _rdap_cache[base_domain] = (registrar, reg_date, now)
+    return (registrar, reg_date)
