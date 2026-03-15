@@ -4,11 +4,27 @@ import time
 from datetime import datetime, timezone
 import requests
 from typing import List, Dict, Any, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from .config import DISCORD_WEBHOOK, SECOND_DISCORD_WEBHOOK
 from .state import state
 from .utils import defang_domain, extract_target_id
+
+
+# Discord embed hard limits
+DISCORD_MAX_EMBED_TOTAL = 6000
+DISCORD_MAX_TITLE = 256
+DISCORD_MAX_DESCRIPTION = 4096
+DISCORD_MAX_FIELD_NAME = 256
+DISCORD_MAX_FIELD_VALUE = 1024
+DISCORD_MAX_FIELDS = 25
+DISCORD_MAX_FOOTER_TEXT = 2048
+
+# Keep a small safety margin to avoid edge-case payload rejection
+DISCORD_SAFE_EMBED_TOTAL = 5600
+
+# Twitter character limit for intent text
+TWITTER_TEXT_LIMIT = 280
 
 
 def generate_mailto_link(
@@ -48,6 +64,118 @@ def generate_mailto_link(
     mailto_url = f"mailto:{to_email}?subject={quote(subject)}&body={quote(body)}"
     
     return mailto_url
+
+
+def _is_namecheap_registrar(registrar: Optional[str]) -> bool:
+    """Return True if registrar appears to be Namecheap."""
+    return bool(registrar and "namecheap" in registrar.lower())
+
+
+def _cap_text(text: str, limit: int) -> str:
+    """Cap text to a max length with truncation suffix."""
+    if len(text) <= limit:
+        return text
+    if limit <= 15:
+        return text[:limit]
+    return text[: limit - 15] + "... (truncated)"
+
+
+def _estimate_embed_chars(embed: Dict[str, Any]) -> int:
+    """Approximate total character count for a Discord embed."""
+    total = 0
+    total += len(str(embed.get("title", "")))
+    total += len(str(embed.get("description", "")))
+    total += len(str(embed.get("url", "")))
+
+    author = embed.get("author")
+    if isinstance(author, dict):
+        total += len(str(author.get("name", "")))
+
+    footer = embed.get("footer")
+    if isinstance(footer, dict):
+        total += len(str(footer.get("text", "")))
+
+    for field in embed.get("fields", []):
+        total += len(str(field.get("name", "")))
+        total += len(str(field.get("value", "")))
+
+    return total
+
+
+def _sanitize_embed(embed: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure embed fits Discord limits; only reduce if needed."""
+    embed["title"] = _cap_text(str(embed.get("title", "")), DISCORD_MAX_TITLE)
+    if "description" in embed:
+        embed["description"] = _cap_text(str(embed.get("description", "")), DISCORD_MAX_DESCRIPTION)
+
+    footer = embed.get("footer")
+    if isinstance(footer, dict) and "text" in footer:
+        footer["text"] = _cap_text(str(footer.get("text", "")), DISCORD_MAX_FOOTER_TEXT)
+
+    fields = embed.get("fields", [])[:DISCORD_MAX_FIELDS]
+    for field in fields:
+        field["name"] = _cap_text(str(field.get("name", "")), DISCORD_MAX_FIELD_NAME)
+        field["value"] = _cap_text(str(field.get("value", "")), DISCORD_MAX_FIELD_VALUE)
+    embed["fields"] = fields
+
+    # If still too large, drop optional fields first, then minimally truncate
+    if _estimate_embed_chars(embed) > DISCORD_SAFE_EMBED_TOTAL:
+        optional_field_names = {
+            "Nameservers",
+            "🌐 IP Addresses",
+            "All Domains in Certificate",
+            "Cloudflare Nameservers",
+            "Blockable IPs",
+            "⚠️ CDN Warning",
+        }
+        embed["fields"] = [
+            f for f in embed.get("fields", [])
+            if f.get("name") not in optional_field_names
+        ]
+
+    if _estimate_embed_chars(embed) > DISCORD_SAFE_EMBED_TOTAL:
+        for field in embed.get("fields", []):
+            field["value"] = _cap_text(str(field.get("value", "")), 512)
+            if _estimate_embed_chars(embed) <= DISCORD_SAFE_EMBED_TOTAL:
+                break
+
+    return embed
+
+
+def _build_namecheap_tweet_link(all_domains: List[str]) -> str:
+    """Build Twitter/X intent link with defanged domains only."""
+    intro = (
+        "@Namecheap I have identified phishing infrastructure being setup "
+        "to attack universities at the following domain:"
+    )
+
+    defanged_domains = [defang_domain(d) for d in all_domains]
+    chosen_domains: List[str] = []
+
+    for d in defanged_domains:
+        candidate = intro + "\n" + "\n".join(chosen_domains + [d])
+        if len(candidate) <= TWITTER_TEXT_LIMIT:
+            chosen_domains.append(d)
+        else:
+            break
+
+    if not chosen_domains and defanged_domains:
+        # Keep at least one IOC even if very long.
+        remaining = TWITTER_TEXT_LIMIT - len(intro) - 1
+        first = defanged_domains[0][: max(0, remaining)]
+        chosen_domains = [first]
+
+    tweet_text = intro
+    if chosen_domains:
+        tweet_text += "\n" + "\n".join(chosen_domains)
+
+    if len(chosen_domains) < len(defanged_domains):
+        omitted = len(defanged_domains) - len(chosen_domains)
+        suffix = f"\n+{omitted} more"
+        if len(tweet_text) + len(suffix) <= TWITTER_TEXT_LIMIT:
+            tweet_text += suffix
+
+    return f"https://twitter.com/intent/tweet?{urlencode({'text': tweet_text})}"
 
 
 def build_embed(
@@ -196,15 +324,63 @@ def build_embed(
         "inline": False
     })
     
-    # Add mailto link
+    # Add actions. Tweet action is Namecheap-only and domains-only to keep size low.
     mailto_link = generate_mailto_link(target_info, domain, all_domains, non_cdn_ips)
+    actions = [f"[Email threat intel]({mailto_link})"]
+    if _is_namecheap_registrar(registrar):
+        tweet_link = _build_namecheap_tweet_link(all_domains)
+        actions.append(f"[Tweet to @Namecheap]({tweet_link})")
+
     embed["fields"].append({
-        "name": "📧 Send Notification",
-        "value": f"[Click here to send threat intel email]({mailto_link})",
+        "name": "📣 Actions",
+        "value": " | ".join(actions),
         "inline": False
     })
-    
-    return embed
+
+    return _sanitize_embed(embed)
+
+
+def _build_minimal_embed(
+    domain: str,
+    all_domains: List[str],
+    registrar: Optional[str],
+    cert_timestamp: Optional[float],
+    reg_date: Optional[str]
+) -> Dict[str, Any]:
+    """Build a compact fallback embed when Discord rejects the full payload."""
+    freshness = "Unknown"
+    if cert_timestamp:
+        age_seconds = int(max(0, time.time() - cert_timestamp))
+        if age_seconds < 60:
+            freshness = f"{age_seconds}s"
+        elif age_seconds < 3600:
+            freshness = f"{age_seconds // 60}m"
+        else:
+            freshness = f"{age_seconds // 3600}h"
+
+    fields = [
+        {"name": "Matched Domain", "value": f"`{defang_domain(domain)}`", "inline": False},
+        {"name": "Domain Count", "value": str(len(all_domains)), "inline": True},
+        {"name": "Registrar", "value": registrar or "Unknown", "inline": True},
+        {"name": "Certificate Freshness", "value": freshness, "inline": True},
+    ]
+    if reg_date:
+        fields.append({"name": "📅 Domain Registered", "value": reg_date, "inline": True})
+
+    mailto_link = generate_mailto_link(None, domain, all_domains, None)
+    actions = [f"[Email threat intel]({mailto_link})"]
+    if _is_namecheap_registrar(registrar):
+        tweet_link = _build_namecheap_tweet_link(all_domains)
+        actions.append(f"[Tweet to @Namecheap]({tweet_link})")
+    fields.append({"name": "📣 Actions", "value": " | ".join(actions), "inline": False})
+
+    minimal = {
+        "title": "⚠️ CT Alert (Compact)",
+        "color": 0xFF0000,
+        "fields": fields,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+    }
+    return _sanitize_embed(minimal)
 
 
 def send_discord_alert(
@@ -258,6 +434,21 @@ def send_discord_alert(
         resp = requests.post(webhook_url, json=payload, timeout=10)
         if resp.status_code >= 300:
             print(f"[!] Discord webhook error {resp.status_code}: {resp.text}")
+            if resp.status_code == 400:
+                # One fallback retry with a minimal payload to avoid silent alert loss.
+                minimal_embed = _build_minimal_embed(
+                    domain=domain,
+                    all_domains=all_domains,
+                    registrar=registrar,
+                    cert_timestamp=cert_timestamp,
+                    reg_date=reg_date,
+                )
+                minimal_payload: Dict[str, Any] = {"embeds": [minimal_embed]}
+                if not high_confidence:
+                    minimal_payload["flags"] = 4096
+                retry_resp = requests.post(webhook_url, json=minimal_payload, timeout=10)
+                if retry_resp.status_code >= 300:
+                    print(f"[!] Discord fallback webhook error {retry_resp.status_code}: {retry_resp.text}")
     except requests.exceptions.Timeout:
         print(f"[!] Discord webhook timeout for {domain}")
     except requests.exceptions.RequestException as e:
