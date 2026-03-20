@@ -189,7 +189,8 @@ def build_embed(
     all_ips: Optional[List[str]] = None,
     non_cdn_ips: Optional[List[str]] = None,
     confirmed_attacker_ip_matches: Optional[List[str]] = None,
-    reg_date: Optional[str] = None
+    reg_date: Optional[str] = None,
+    email_status: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build Discord embed for alert."""
     
@@ -327,6 +328,13 @@ def build_embed(
             "value": f"```\n{matched_ips}\n```",
             "inline": False
         })
+
+    if email_status:
+        embed["fields"].append({
+            "name": "Email Status",
+            "value": email_status,
+            "inline": False,
+        })
     
     # Add all domains in code block
     embed["fields"].append({
@@ -413,7 +421,8 @@ def send_discord_alert(
     non_cdn_ips: Optional[List[str]] = None,
     confirmed_attacker_ip_matches: Optional[List[str]] = None,
     high_confidence: bool = True,
-    reg_date: Optional[str] = None
+    reg_date: Optional[str] = None,
+    email_status: Optional[str] = None,
 ) -> None:
     """Send alert to Discord webhook.
     
@@ -435,7 +444,7 @@ def send_discord_alert(
     embed = build_embed(
         domain, all_domains, cert_timestamp, is_known_attacker,
         registrar, is_cloudflare, nameservers, all_ips, non_cdn_ips,
-        confirmed_attacker_ip_matches, reg_date
+        confirmed_attacker_ip_matches, reg_date, email_status
     )
     
     # Mark low-confidence alerts visually

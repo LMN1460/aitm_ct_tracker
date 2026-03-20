@@ -17,6 +17,7 @@ from .state import state
 from .domain_checks import is_known_attacker_domain, get_nameservers, get_domain_info
 from .ip_tracking import get_attacker_ips_for_domain
 from .discord import send_discord_alert
+from .email_sender import send_automated_target_email
 from .utils import extract_target_id, is_common_word_id
 
 
@@ -62,6 +63,16 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
     state.alerted_domains.add(domain)
     
     # Known attacker domains are always high confidence
+    api_id = extract_target_id(domain)
+    target_info = state.target_mapping.get(api_id) if api_id else None
+    email_status = send_automated_target_email(
+        target_info=target_info,
+        domain=domain,
+        all_domains=all_domains,
+        non_cdn_ips=non_cdn_ips,
+        high_confidence=True,
+    )
+
     send_discord_alert(
         domain, all_domains,
         cert_timestamp=not_before,
@@ -73,7 +84,8 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
         non_cdn_ips=non_cdn_ips,
         confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
         high_confidence=True,
-        reg_date=reg_date
+        reg_date=reg_date,
+        email_status=email_status.details,
     )
     state.total_alerts_count += 1
     return True
@@ -139,6 +151,15 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
     if len(state.alerted_domains) > ALERTED_DOMAINS_LIMIT:
         state.clear_alerted_domains()
     state.alerted_domains.add(domain)
+
+    target_info = state.target_mapping.get(api_id) if (api_id and api_id in state.target_mapping) else None
+    email_status = send_automated_target_email(
+        target_info=target_info,
+        domain=domain,
+        all_domains=all_domains,
+        non_cdn_ips=non_cdn_ips,
+        high_confidence=high_confidence,
+    )
     
     send_discord_alert(
         domain, all_domains,
@@ -151,7 +172,8 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
         non_cdn_ips=non_cdn_ips,
         confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
         high_confidence=high_confidence,
-        reg_date=reg_date
+        reg_date=reg_date,
+        email_status=email_status.details,
     )
     state.total_alerts_count += 1
     return True

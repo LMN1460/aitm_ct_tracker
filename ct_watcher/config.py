@@ -5,6 +5,25 @@ import re
 import ipaddress
 from dotenv import load_dotenv
 
+
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+    """Parse common boolean env var values."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    """Parse integer env var values with fallback."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
 # Load environment variables
 load_dotenv()
 
@@ -16,6 +35,23 @@ if not DISCORD_WEBHOOK:
 # Second Discord webhook (optional) - for low-confidence alerts (manual review)
 # These alerts are sent without @mentions/notifications
 SECOND_DISCORD_WEBHOOK = os.environ.get("SECOND_DISCORD_WEBHOOK")
+
+# SMTP settings for automated threat-intel emails
+SMTP_ENABLED = _parse_bool_env("SMTP_ENABLED", False)
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.fastmail.com")
+SMTP_PORT = _parse_int_env("SMTP_PORT", 587)
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "")
+SMTP_REPLY_TO = os.environ.get("SMTP_REPLY_TO", "")
+SMTP_USE_STARTTLS = _parse_bool_env("SMTP_USE_STARTTLS", True)
+SMTP_USE_SSL = _parse_bool_env("SMTP_USE_SSL", False)
+SMTP_TIMEOUT_SECONDS = _parse_int_env("SMTP_TIMEOUT_SECONDS", 15)
+
+AUTOMATED_EMAIL_DISCLAIMER = os.environ.get(
+    "AUTOMATED_EMAIL_DISCLAIMER",
+    "This is an automated message. Please reply if you have questions or if this appears to be in error.",
+)
 
 # Registrars that indicate high confidence (commonly used by attackers)
 HIGH_CONFIDENCE_REGISTRARS = frozenset([
