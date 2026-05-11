@@ -43,7 +43,7 @@ def on_open(ws) -> None:
 
 def run_websocket_client() -> None:
     """Run the WebSocket client with auto-reconnect."""
-    print("[*] Starting CertStream watcher (local certstream-server-go)...")
+    print("[*] Starting CertStream watcher...")
     
     while True:
         try:

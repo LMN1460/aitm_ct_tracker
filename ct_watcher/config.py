@@ -140,7 +140,10 @@ INITIAL_RECONNECT_DELAY = 1
 MAX_RECONNECT_DELAY = 60
 
 # WebSocket settings
-CERTSTREAM_WS_URL = os.environ.get("CERTSTREAM_WS_URL")
+_certstream_ws_url = os.environ.get("CERTSTREAM_WS_URL")
+if not _certstream_ws_url:
+    raise RuntimeError("CERTSTREAM_WS_URL is not set in the environment or .env file")
+CERTSTREAM_WS_URL: str = _certstream_ws_url
 WS_PING_INTERVAL = 30
 WS_PING_TIMEOUT = 10
 
