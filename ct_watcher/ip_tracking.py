@@ -50,37 +50,39 @@ def resolve_domain_ip(domain: str) -> List[str]:
 def save_attacker_ips(filepath: str = ATTACKER_IPS_FILE) -> None:
     """Save attacker IPs to JSON file."""
     try:
-        state.attacker_ips_data["last_updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        with open(filepath, 'w') as f:
-            json.dump(state.attacker_ips_data, f, indent=2)
+        with state.ip_save_lock:
+            state.attacker_ips_data["last_updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with open(filepath, 'w') as f:
+                json.dump(state.attacker_ips_data, f, indent=2)
     except Exception as e:
         print(f"[!] Error saving attacker IPs: {e}")
 
 
 def track_attacker_ip(ip: str, domain: str, is_cdn: bool = False) -> None:
     """Track an attacker IP address with associated domain."""
-    ips_data = state.attacker_ips_data["ips"]
-    
-    if ip not in ips_data:
-        ips_data[ip] = {
-            "first_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "last_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "domains": [domain],
-            "is_cdn": is_cdn,
-            "count": 1
-        }
-        print(f"[+] New attacker IP tracked: {ip} {'(CDN)' if is_cdn else ''}")
-    else:
-        entry = ips_data[ip]
-        entry["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        entry["count"] += 1
-        if domain not in entry["domains"]:
-            entry["domains"].append(domain)
-            # Keep only last 50 domains per IP
-            if len(entry["domains"]) > 50:
-                entry["domains"] = entry["domains"][-50:]
-    
-    # Save after each update
+    with state.ip_save_lock:
+        ips_data = state.attacker_ips_data["ips"]
+
+        if ip not in ips_data:
+            ips_data[ip] = {
+                "first_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "last_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "domains": [domain],
+                "is_cdn": is_cdn,
+                "count": 1
+            }
+            print(f"[+] New attacker IP tracked: {ip} {'(CDN)' if is_cdn else ''}")
+        else:
+            entry = ips_data[ip]
+            entry["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            entry["count"] += 1
+            if domain not in entry["domains"]:
+                entry["domains"].append(domain)
+                # Keep only last 50 domains per IP
+                if len(entry["domains"]) > 50:
+                    entry["domains"] = entry["domains"][-50:]
+
+    # Save after each update (outside the lock to avoid reentrant acquisition)
     save_attacker_ips()
 
 

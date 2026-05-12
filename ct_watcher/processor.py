@@ -40,28 +40,26 @@ def _print_stats() -> None:
 
 def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, not_before: float | None) -> bool:
     """Handle known attacker domain detection. Returns True if alert was sent."""
-    if domain in state.alerted_domains:
-        return False
-    
+    with state.lock:
+        if domain in state.alerted_domains:
+            return False
+        if len(state.alerted_domains) > ALERTED_DOMAINS_LIMIT:
+            state.clear_alerted_domains()
+        state.alerted_domains.add(domain)
+        if len(state.alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
+            state.clear_alerted_certificates()
+        state.alerted_certificates.add(cert_id)
+
     # Get nameserver and registrar info
     is_cloudflare, nameservers_list = get_nameservers(domain)
     registrar, reg_date = get_domain_info(domain)
-    
+
     # Resolve and track IP addresses
     all_ips, non_cdn_ips = get_attacker_ips_for_domain(domain)
     confirmed_attacker_ip_matches = sorted(ip for ip in all_ips if ip in state.known_attacker_ips)
-    
+
     print(f"[!] KNOWN ATTACKER DOMAIN DETECTED: {domain} (Registrar: {registrar}, IPs: {len(all_ips)}, Blockable: {len(non_cdn_ips)})")
-    
-    # Mark as alerted
-    if len(state.alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
-        state.clear_alerted_certificates()
-    state.alerted_certificates.add(cert_id)
-    
-    if len(state.alerted_domains) > ALERTED_DOMAINS_LIMIT:
-        state.clear_alerted_domains()
-    state.alerted_domains.add(domain)
-    
+
     # Known attacker domains are always high confidence
     api_id = extract_target_id(domain)
     target_info = state.target_mapping.get(api_id) if api_id else None
@@ -91,9 +89,13 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
 
 def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not_before: float | None) -> bool:
     """Handle pattern match detection. Returns True if alert was sent."""
-    if domain in state.alerted_domains:
-        return False
-    
+    with state.lock:
+        if domain in state.alerted_domains:
+            return False
+        if len(state.alerted_domains) > ALERTED_DOMAINS_LIMIT:
+            state.clear_alerted_domains()
+        state.alerted_domains.add(domain)
+
     print(f"[+] Potential match: {domain}")
     
     # Only alert if multiple domains in certificate
@@ -142,14 +144,10 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
     elif is_suspicious_registrar and is_cloudflare:
         print(f"    -> Suspicious pattern: {registrar} + Cloudflare nameservers")
     
-    # Mark as alerted
-    if len(state.alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
-        state.clear_alerted_certificates()
-    state.alerted_certificates.add(cert_id)
-    
-    if len(state.alerted_domains) > ALERTED_DOMAINS_LIMIT:
-        state.clear_alerted_domains()
-    state.alerted_domains.add(domain)
+    with state.lock:
+        if len(state.alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
+            state.clear_alerted_certificates()
+        state.alerted_certificates.add(cert_id)
 
     target_info = state.target_mapping.get(api_id) if (api_id and api_id in state.target_mapping) else None
     email_status = send_automated_target_email(
@@ -200,8 +198,9 @@ def process_message(message_str: str) -> None:
         cert_id = hash(tuple(sorted(d.strip().lower() for d in all_domains)))
         
         # Check if already processed
-        if cert_id in state.alerted_certificates:
-            return
+        with state.lock:
+            if cert_id in state.alerted_certificates:
+                return
         
         # Check certificate age
         not_before = leaf_cert.get("not_before")
@@ -223,11 +222,12 @@ def process_message(message_str: str) -> None:
                 domain = d.strip().lower()
 
                 # Dedupe
-                if domain in state.seen_domains:
-                    continue
-                if len(state.seen_domains) > SEEN_DOMAINS_LIMIT:
-                    state.clear_seen_domains()
-                state.seen_domains.add(domain)
+                with state.lock:
+                    if domain in state.seen_domains:
+                        continue
+                    if len(state.seen_domains) > SEEN_DOMAINS_LIMIT:
+                        state.clear_seen_domains()
+                    state.seen_domains.add(domain)
 
                 # Check for known attacker domains first
                 if is_known_attacker_domain(domain, state.known_attacker_domains):

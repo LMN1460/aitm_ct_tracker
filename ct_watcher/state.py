@@ -1,5 +1,6 @@
 """Global state management for CT Watcher."""
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Set, Any, Optional
@@ -28,7 +29,11 @@ class WatcherState:
     
     # Reconnection
     reconnect_delay: int = 1
-    
+
+    # Locks
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    ip_save_lock: threading.Lock = field(default_factory=threading.Lock)
+
     def clear_seen_domains(self):
         """Clear seen domains set."""
         self.seen_domains.clear()

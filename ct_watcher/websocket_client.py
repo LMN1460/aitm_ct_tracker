@@ -1,9 +1,9 @@
 """WebSocket client for connecting to certstream server."""
 
-import sys
-import time
+import asyncio
 import traceback
-import websocket
+import websockets
+import websockets.exceptions
 
 from .config import (
     CERTSTREAM_WS_URL,
@@ -16,62 +16,31 @@ from .state import state
 from .processor import process_message
 
 
-def on_message(ws, message: str) -> None:
-    """Handle incoming WebSocket messages."""
-    try:
-        process_message(message)
-    except Exception as e:
-        print(f"[!] Unhandled error in on_message: {e}")
-        traceback.print_exc()
-
-
-def on_error(ws, error) -> None:
-    """Handle WebSocket errors."""
-    print(f"[!] WebSocket error: {error}")
-
-
-def on_close(ws, close_status_code, close_msg) -> None:
-    """Handle WebSocket close."""
-    print(f"[!] WebSocket closed: {close_status_code} - {close_msg}")
-
-
-def on_open(ws) -> None:
-    """Handle WebSocket open."""
-    state.reconnect_delay = INITIAL_RECONNECT_DELAY
-    print("[*] WebSocket connection established")
-
-
-def run_websocket_client() -> None:
+async def run_websocket_client() -> None:
     """Run the WebSocket client with auto-reconnect."""
     print("[*] Starting CertStream watcher...")
-    
-    while True:
-        try:
-            print(f"[*] Connecting to {CERTSTREAM_WS_URL} ...")
-            
-            ws = websocket.WebSocketApp(
-                CERTSTREAM_WS_URL,
-                on_message=on_message,
-                on_error=on_error,
-                on_close=on_close,
-                on_open=on_open
-            )
-            
-            ws.run_forever(ping_interval=WS_PING_INTERVAL, ping_timeout=WS_PING_TIMEOUT)
-            
-            # Connection closed, reconnect
-            print(f"[*] Connection closed, reconnecting in {state.reconnect_delay} seconds...")
-            time.sleep(state.reconnect_delay)
-            
-            # Exponential backoff
-            state.reconnect_delay = min(state.reconnect_delay * 2, MAX_RECONNECT_DELAY)
-            
-        except KeyboardInterrupt:
-            print("\n[*] Shutting down gracefully...")
-            sys.exit(0)
-        except Exception as e:
-            print(f"[!] Unexpected error in main loop: {e}")
-            traceback.print_exc()
+    try:
+        while True:
+            try:
+                print(f"[*] Connecting to {CERTSTREAM_WS_URL} ...")
+                async with websockets.connect(
+                    CERTSTREAM_WS_URL,
+                    ping_interval=WS_PING_INTERVAL,
+                    ping_timeout=WS_PING_TIMEOUT,
+                ) as ws:
+                    state.reconnect_delay = INITIAL_RECONNECT_DELAY
+                    print("[*] WebSocket connection established")
+                    async for message in ws:
+                        msg = message if isinstance(message, str) else bytes(message).decode("utf-8")
+                        asyncio.create_task(asyncio.to_thread(process_message, msg))
+            except websockets.exceptions.ConnectionClosed as e:
+                print(f"[!] WebSocket closed: {e}")
+            except Exception as e:
+                print(f"[!] Unexpected error in main loop: {e}")
+                traceback.print_exc()
+
             print(f"[*] Reconnecting in {state.reconnect_delay} seconds...")
-            time.sleep(state.reconnect_delay)
+            await asyncio.sleep(state.reconnect_delay)
             state.reconnect_delay = min(state.reconnect_delay * 2, MAX_RECONNECT_DELAY)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\n[*] Shutting down gracefully...")

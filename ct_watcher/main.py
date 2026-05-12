@@ -1,5 +1,6 @@
 """Main entry point for CT Watcher."""
 
+import asyncio
 from .config import DISCORD_WEBHOOK
 from .state import state
 from .loaders import (
@@ -25,7 +26,7 @@ def main() -> None:
     state.attacker_ips_data = load_attacker_ips()
     
     # Start the WebSocket client
-    run_websocket_client()
+    asyncio.run(run_websocket_client())
 
 
 if __name__ == "__main__":
