@@ -24,6 +24,7 @@ Monitors certificate transparency logs for a specific AitM phishing attack targe
 ## Usage
 1. Clone the repository and navigate to the project directory.
 2. Create a `.env` file based on the `.env.example` and fill in the required environment variables.
+   - `CERTSTREAM_WS_URL` - WebSocket URL of your certstream server. With the included Docker setup on the same machine: `ws://127.0.0.1:8080/`
 3. ```docker-compose up -d``` to start the certstream server.
 4. (Optional) Create and activate a virtual environment:
    ```bash
@@ -38,3 +39,10 @@ Monitors certificate transparency logs for a specific AitM phishing attack targe
    ```bash
    python watcher.py
    ```
+
+### Without Docker
+If you prefer to run certstream-server-go as a standalone binary instead of Docker:
+1. Download the release binary from [certstream-server-go releases](https://github.com/d-Rickyy-b/certstream-server-go/releases).
+2. Run it with the included config: `./certstream-server-go -config config.yaml`
+
+The `CERTSTREAM_WS_URL` is the same either way: `ws://127.0.0.1:8080/`
