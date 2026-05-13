@@ -3,7 +3,7 @@
 import time
 from datetime import datetime, timezone
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import quote, urlencode
 
 from .config import DISCORD_WEBHOOK, EMAIL_ENABLED
@@ -23,6 +23,11 @@ DISCORD_MAX_FOOTER_TEXT = 2048
 # Keep a small safety margin to avoid edge-case payload rejection
 DISCORD_SAFE_EMBED_TOTAL = 5600
 
+# Maximum length for a mailto URL so that the full "[Email threat intel](url)"
+# markdown string stays within DISCORD_MAX_FIELD_VALUE (1024 chars).
+# "[Email threat intel](" is 21 chars, ")" is 1 char → 1024 - 22 = 1002, use 1000 for safety.
+MAILTO_URL_MAX = 1000
+
 # Twitter character limit for intent text
 TWITTER_TEXT_LIMIT = 280
 
@@ -32,8 +37,14 @@ def generate_mailto_link(
     domain: str,
     all_domains: List[str],
     non_cdn_ips: Optional[List[str]] = None
-) -> str:
-    """Generate a mailto link with pre-filled threat intel email."""
+) -> Tuple[str, int]:
+    """Generate a mailto link with pre-filled threat intel email.
+
+    Returns a (url, omitted_count) tuple. omitted_count > 0 means the domain
+    list was trimmed to keep the URL within MAILTO_URL_MAX chars so that the
+    Discord field value ``[Email threat intel](url)`` never exceeds the 1024-char
+    field limit and produces a working (non-truncated) link.
+    """
     # Determine recipient email and org name
     if target_info:
         to_email = target_info['email']
@@ -41,29 +52,52 @@ def generate_mailto_link(
     else:
         to_email = "INSERT_TARGET_EMAIL"
         org_name = "INSERT_ORG_NAME"
-    
-    # Build subject
+
+    # Build subject (fixed, not trimmed)
     subject = f"[Threat Intel] Phishing infrastructure detected targeting {org_name}"
-    
-    # Build IOCs list (defanged domains)
-    iocs_list = "\r\n".join([defang_domain(d) for d in all_domains[:50]])
-    if len(all_domains) > 50:
-        iocs_list += f"\r\n... and {len(all_domains) - 50} more domains"
-    
-    # Add non-CDN IPs to IOCs (these are safe to block)
+
+    # Split template around the IOC placeholder so we can measure overhead
+    template = state.email_template
+    iocs_placeholder = "{IOCS_LIST}"
+    if iocs_placeholder in template:
+        template_before, template_after = template.split(iocs_placeholder, 1)
+    else:
+        template_before, template_after = template, ""
+
+    # Build the fixed prefix of the URL (everything before the IOC list)
+    url_prefix = f"mailto:{to_email}?subject={quote(subject)}&body={quote(template_before)}"
+
+    # Add non-CDN IPs section (fixed, added after domains)
+    ip_section = ""
     if non_cdn_ips:
-        iocs_list += "\r\n\r\nIP Addresses:\r\n"
-        iocs_list += "\r\n".join(non_cdn_ips[:20])
+        ip_section = "\r\n\r\nIP Addresses:\r\n"
+        ip_section += "\r\n".join(non_cdn_ips[:20])
         if len(non_cdn_ips) > 20:
-            iocs_list += f"\r\n... and {len(non_cdn_ips) - 20} more IPs"
-    
-    # Build email body from template
-    body = state.email_template.replace("{IOCS_LIST}", iocs_list)
-    
-    # URL encode the parameters
+            ip_section += f"\r\n... and {len(non_cdn_ips) - 20} more IPs"
+
+    url_suffix = quote(ip_section + template_after)
+
+    # Incrementally add domains until the next one would push the URL over MAILTO_URL_MAX
+    defanged = [defang_domain(d) for d in all_domains]
+    included: List[str] = []
+    for d in defanged:
+        candidate_iocs = "\r\n".join(included + [d])
+        candidate_url = url_prefix + quote(candidate_iocs) + url_suffix
+        if len(candidate_url) > MAILTO_URL_MAX:
+            break
+        included.append(d)
+
+    omitted_count = len(all_domains) - len(included)
+
+    # Build final IOC string
+    iocs_list = "\r\n".join(included)
+    if omitted_count > 0:
+        iocs_list += f"\r\n(+{omitted_count} more — see Discord for full list)"
+
+    body = template_before + iocs_list + ip_section + template_after
     mailto_url = f"mailto:{to_email}?subject={quote(subject)}&body={quote(body)}"
-    
-    return mailto_url
+
+    return mailto_url, omitted_count
 
 
 def _is_namecheap_registrar(registrar: Optional[str]) -> bool:
@@ -192,6 +226,8 @@ def build_embed(
     confirmed_attacker_ip_matches: Optional[List[str]] = None,
     reg_date: Optional[str] = None,
     email_status: Optional[str] = None,
+    email_status_state: Optional[str] = None,
+    mailto_link: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build Discord embed for alert."""
     
@@ -346,12 +382,20 @@ def build_embed(
     
     # Add actions. Email and tweet links get separate fields to avoid 1024-char truncation.
     if EMAIL_ENABLED:
-        mailto_link = generate_mailto_link(target_info, domain, all_domains, non_cdn_ips)
-        embed["fields"].append({
-            "name": "📣 Actions",
-            "value": f"[Email threat intel]({mailto_link})",
-            "inline": False
-        })
+        if email_status_state == "sent":
+            embed["fields"].append({
+                "name": "📣 Actions",
+                "value": "✅ Email sent automatically",
+                "inline": False
+            })
+        else:
+            # Use pre-computed mailto_link if provided by send_discord_alert, else generate inline
+            link = mailto_link if mailto_link is not None else generate_mailto_link(target_info, domain, all_domains, non_cdn_ips)[0]
+            embed["fields"].append({
+                "name": "📣 Actions",
+                "value": f"[Email threat intel]({link})",
+                "inline": False
+            })
     if _is_namecheap_registrar(registrar):
         tweet_link = _build_namecheap_tweet_link(all_domains)
         embed["fields"].append({
@@ -398,8 +442,8 @@ def _build_minimal_embed(
         })
 
     if EMAIL_ENABLED:
-        mailto_link = generate_mailto_link(None, domain, all_domains, None)
-        fields.append({"name": "📣 Actions", "value": f"[Email threat intel]({mailto_link})", "inline": False})
+        minimal_mailto, _ = generate_mailto_link(None, domain, all_domains, None)
+        fields.append({"name": "📣 Actions", "value": f"[Email threat intel]({minimal_mailto})", "inline": False})
     if _is_namecheap_registrar(registrar):
         tweet_link = _build_namecheap_tweet_link(all_domains)
         fields.append({"name": "🐦 Tweet @Namecheap", "value": f"[Tweet to @Namecheap]({tweet_link})", "inline": False})
@@ -426,19 +470,35 @@ def send_discord_alert(
     confirmed_attacker_ip_matches: Optional[List[str]] = None,
     reg_date: Optional[str] = None,
     email_status: Optional[str] = None,
+    email_status_state: Optional[str] = None,
 ) -> None:
     """Send alert to Discord webhook."""
     webhook_url = DISCORD_WEBHOOK
     if not webhook_url:
         print("[!] Discord webhook URL not set; cannot send alert.")
         return
-    
+
+    # Pre-compute mailto so we know whether trimming occurred before building the embed.
+    mailto_url: Optional[str] = None
+    omitted_count = 0
+    if EMAIL_ENABLED and email_status_state != "sent":
+        hex_id = extract_target_id(domain)
+        target_info_for_mailto = state.target_mapping.get(hex_id) if hex_id else None
+        mailto_url, omitted_count = generate_mailto_link(
+            target_info=target_info_for_mailto,
+            domain=domain,
+            all_domains=all_domains,
+            non_cdn_ips=non_cdn_ips,
+        )
+
     embed = build_embed(
         domain, all_domains, cert_timestamp, is_known_attacker,
         registrar, is_cloudflare, nameservers, all_ips, non_cdn_ips,
-        confirmed_attacker_ip_matches, reg_date, email_status
+        confirmed_attacker_ip_matches, reg_date, email_status,
+        email_status_state=email_status_state,
+        mailto_link=mailto_url,
     )
-    
+
     payload: Dict[str, Any] = {"embeds": [embed]}
 
     try:
@@ -459,6 +519,22 @@ def send_discord_alert(
                 retry_resp = requests.post(webhook_url, json=minimal_payload, timeout=10)
                 if retry_resp.status_code >= 300:
                     print(f"[!] Discord fallback webhook error {retry_resp.status_code}: {retry_resp.text}")
+        else:
+            # Embed sent successfully — send follow-up plain message if mailto was trimmed.
+            if omitted_count > 0:
+                defanged_all = [defang_domain(d) for d in all_domains]
+                ioc_lines = "\n".join(defanged_all)
+                followup_content = (
+                    f"📋 **Full IOC list** (mailto trimmed — {omitted_count} domain(s) omitted):\n"
+                    f"```\n{ioc_lines}\n```"
+                )
+                # Discord content field limit is 2000 chars; truncate gracefully if needed.
+                if len(followup_content) > 2000:
+                    followup_content = followup_content[:1985] + "\n```(truncated)"
+                try:
+                    requests.post(webhook_url, json={"content": followup_content}, timeout=10)
+                except requests.exceptions.RequestException as e:
+                    print(f"[!] Discord follow-up IOC message failed for {domain}: {e}")
     except requests.exceptions.Timeout:
         print(f"[!] Discord webhook timeout for {domain}")
     except requests.exceptions.RequestException as e:

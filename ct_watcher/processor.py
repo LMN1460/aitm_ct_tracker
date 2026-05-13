@@ -82,6 +82,7 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
         confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
         reg_date=reg_date,
         email_status=email_status.details,
+        email_status_state=email_status.state,
     )
     state.total_alerts_count += 1
     return True
@@ -172,6 +173,7 @@ def _handle_pattern_match(domain: str, all_domains: List[str], cert_id: int, not
         confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
         reg_date=reg_date,
         email_status=email_status.details,
+        email_status_state=email_status.state,
     )
     state.total_alerts_count += 1
     return True
