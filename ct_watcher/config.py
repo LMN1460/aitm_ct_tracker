@@ -32,6 +32,9 @@ DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 if not DISCORD_WEBHOOK:
     raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
 
+# Master kill-switch for all email functionality (mailto links, SMTP status, automated emails)
+EMAIL_ENABLED = _parse_bool_env("EMAIL_ENABLED", True)
+
 # SMTP settings for automated threat-intel emails
 SMTP_ENABLED = _parse_bool_env("SMTP_ENABLED", False)
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.fastmail.com")

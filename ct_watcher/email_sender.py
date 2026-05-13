@@ -6,6 +6,7 @@ import smtplib
 from typing import List, Dict, Optional
 
 from .config import (
+    EMAIL_ENABLED,
     SMTP_ENABLED,
     SMTP_HOST,
     SMTP_PORT,
@@ -64,6 +65,9 @@ def send_automated_target_email(
     non_cdn_ips: Optional[List[str]],
 ) -> EmailSendStatus:
     """Send automated SMTP email when policy requirements are met."""
+    if not EMAIL_ENABLED:
+        return EmailSendStatus("skipped", "Skipped: email feature disabled")
+
     if not target_info:
         return EmailSendStatus("skipped", "Skipped: unknown target organization")
 

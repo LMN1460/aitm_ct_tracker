@@ -6,7 +6,7 @@ import requests
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote, urlencode
 
-from .config import DISCORD_WEBHOOK
+from .config import DISCORD_WEBHOOK, EMAIL_ENABLED
 from .state import state
 from .utils import defang_domain, extract_target_id
 
@@ -330,7 +330,7 @@ def build_embed(
             "inline": False
         })
 
-    if email_status:
+    if EMAIL_ENABLED and email_status:
         embed["fields"].append({
             "name": "Email Status",
             "value": email_status,
@@ -345,12 +345,13 @@ def build_embed(
     })
     
     # Add actions. Email and tweet links get separate fields to avoid 1024-char truncation.
-    mailto_link = generate_mailto_link(target_info, domain, all_domains, non_cdn_ips)
-    embed["fields"].append({
-        "name": "📣 Actions",
-        "value": f"[Email threat intel]({mailto_link})",
-        "inline": False
-    })
+    if EMAIL_ENABLED:
+        mailto_link = generate_mailto_link(target_info, domain, all_domains, non_cdn_ips)
+        embed["fields"].append({
+            "name": "📣 Actions",
+            "value": f"[Email threat intel]({mailto_link})",
+            "inline": False
+        })
     if _is_namecheap_registrar(registrar):
         tweet_link = _build_namecheap_tweet_link(all_domains)
         embed["fields"].append({
@@ -396,8 +397,9 @@ def _build_minimal_embed(
             "inline": False,
         })
 
-    mailto_link = generate_mailto_link(None, domain, all_domains, None)
-    fields.append({"name": "📣 Actions", "value": f"[Email threat intel]({mailto_link})", "inline": False})
+    if EMAIL_ENABLED:
+        mailto_link = generate_mailto_link(None, domain, all_domains, None)
+        fields.append({"name": "📣 Actions", "value": f"[Email threat intel]({mailto_link})", "inline": False})
     if _is_namecheap_registrar(registrar):
         tweet_link = _build_namecheap_tweet_link(all_domains)
         fields.append({"name": "🐦 Tweet @Namecheap", "value": f"[Tweet to @Namecheap]({tweet_link})", "inline": False})
