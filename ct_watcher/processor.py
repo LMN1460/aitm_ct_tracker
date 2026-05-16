@@ -63,6 +63,16 @@ def _handle_known_attacker(domain: str, all_domains: List[str], cert_id: int, no
     # Known attacker domains are always high confidence
     api_id = extract_target_id(domain)
     target_info = state.target_mapping.get(api_id) if api_id else None
+
+    # If no target found from the matched domain, scan all cert domains for an api-<id> beacon
+    if not target_info:
+        for d in all_domains:
+            candidate_id = extract_target_id(d.strip().lower())
+            if candidate_id and candidate_id in state.target_mapping:
+                api_id = candidate_id
+                target_info = state.target_mapping[api_id]
+                break
+
     email_status = send_automated_target_email(
         target_info=target_info,
         domain=domain,
