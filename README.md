@@ -1,4 +1,4 @@
-## Certificate Transparency Watcher for AitM Phishing Attacks against Duo
+## CertSnipe
 
 Monitors certificate transparency logs for a specific AitM phishing attack targeting Duo SSO, as described in my [blog post](https://j027.net/hunting-evilginx/). Uses a local [`certstream-server-go`](https://github.com/d-Rickyy-b/certstream-server-go) instance (via Docker) as the CT data source.
 
