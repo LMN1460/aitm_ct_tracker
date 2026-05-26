@@ -1,0 +1,14 @@
+To the Security Team,
+
+New SSL certificate registrations have been detected matching known AitM
+phishing patterns targeting your organization.
+
+IOCs:
+{IOCS_LIST}
+
+Context: Likely staging for a credential harvesting campaign.
+Recommended action: block these domains at the network edge.
+
+Please let me know if you have any questions or need additional information.
+
+Regards

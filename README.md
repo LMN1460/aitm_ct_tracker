@@ -6,7 +6,7 @@ Monitors certificate transparency logs for a specific AitM phishing attack targe
 |------|---------|
 | `targets.json` | Targeted organizations (Duo ID → name + email). Must be manually populated. |
 | `.env.example` | Template for required environment variables. Copy to `.env` before running. |
-| `email_template.txt` | Email template for alerts. A default fallback is included. |
+| `email_template.example.txt` | Example email template. Copy to `email_template.txt` to customize. |
 | `known_domains.txt` | Known attacker domains, so new certs on these are flagged high-confidence. |
 | `known_ips.txt` | Known attacker IPs, so low-confidence matches resolving here are upgraded. |
 | `watched_org_ids.txt` | Optional. Org IDs (one per line) whose alerts are also sent to `DISCORD_WEBHOOK_WATCHED`. |
@@ -47,3 +47,20 @@ If you prefer to run certstream-server-go as a standalone binary instead of Dock
 2. Run it with the included config: `./certstream-server-go -config config.yaml`
 
 The `CERTSTREAM_WS_URL` is the same either way: `ws://127.0.0.1:8080/`
+
+## Email Template
+
+The email template controls the body of both automated SMTP emails and the
+mailto links embedded in Discord alerts.
+
+1. Copy the example and customize:
+   ```bash
+   cp email_template.example.txt email_template.txt
+   ```
+
+2. The `{IOCS_LIST}` placeholder is required — it gets replaced at runtime
+   with defanged domains (up to 50) and non-CDN IPs (up to 20).
+
+3. (Optional) Set `AUTOMATED_EMAIL_DISCLAIMER` in your `.env` to append a
+   footer to every automated SMTP email. A default disclaimer is used if
+   not set.
