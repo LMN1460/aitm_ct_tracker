@@ -231,7 +231,7 @@ def build_embed(
     # Extract hex ID and look up target info
     hex_id = extract_target_id(domain)
     target_info = None
-    if hex_id and hex_id in state.target_mapping:
+    if hex_id in state.target_mapping:
         target_info = state.target_mapping[hex_id]
 
     # Calculate certificate freshness

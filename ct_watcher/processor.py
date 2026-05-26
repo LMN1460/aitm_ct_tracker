@@ -82,7 +82,7 @@ def _handle_known_attacker(
     if not target_info:
         for d in all_domains:
             candidate_id = extract_target_id(d.strip().lower())
-            if candidate_id and candidate_id in state.target_mapping:
+            if candidate_id in state.target_mapping:
                 api_id = candidate_id
                 target_info = state.target_mapping[api_id]
                 break
@@ -95,9 +95,8 @@ def _handle_known_attacker(
         api_id=api_id,
     )
 
-    watched_webhook = (
-        DISCORD_WEBHOOK_WATCHED if (api_id and api_id in state.watched_org_ids) else None
-    )
+    watched_webhook = DISCORD_WEBHOOK_WATCHED if api_id in state.watched_org_ids else None
+
     send_discord_alert(
         domain,
         all_domains,
@@ -153,7 +152,7 @@ def _handle_pattern_match(
     # Unknown 5-char alphanumeric IDs are always low confidence to avoid
     # alert fatigue
     api_id = extract_target_id(domain)
-    is_known_target = api_id and api_id in state.target_mapping
+    is_known_target = api_id in state.target_mapping
     is_suspicious_registrar = _is_high_confidence_registrar(registrar)
     is_8char_hex = api_id and len(api_id) == 8 and all(c in "0123456789abcdef" for c in api_id)
 
@@ -194,9 +193,7 @@ def _handle_pattern_match(
             state.clear_alerted_certificates()
         state.alerted_certificates.add(cert_id)
 
-    target_info = (
-        state.target_mapping.get(api_id) if (api_id and api_id in state.target_mapping) else None
-    )
+    target_info = state.target_mapping.get(api_id) if api_id else None
     email_status = send_automated_target_email(
         target_info=target_info,
         domain=domain,
@@ -205,9 +202,7 @@ def _handle_pattern_match(
         api_id=api_id,
     )
 
-    watched_webhook = (
-        DISCORD_WEBHOOK_WATCHED if (api_id and api_id in state.watched_org_ids) else None
-    )
+    watched_webhook = DISCORD_WEBHOOK_WATCHED if api_id in state.watched_org_ids else None
     send_discord_alert(
         domain,
         all_domains,
