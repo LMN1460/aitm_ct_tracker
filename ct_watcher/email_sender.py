@@ -81,7 +81,7 @@ def send_automated_target_email(
     if not target_email:
         return EmailSendStatus("skipped", "Skipped: target email missing")
 
-    if SMTP_ONLY_WATCHED and not (api_id and api_id in state.watched_org_ids):
+    if SMTP_ONLY_WATCHED and api_id not in state.watched_org_ids:
         return EmailSendStatus("skipped", "Skipped: only emailing watched orgs")
 
     subject = f"[Threat Intel] Phishing infrastructure detected targeting {target_name}"
