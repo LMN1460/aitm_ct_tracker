@@ -112,6 +112,7 @@ def _handle_known_attacker(
         email_status=email_status.details,
         email_status_state=email_status.state,
         extra_webhook_url=watched_webhook,
+        target_info=target_info,
     )
     state.total_alerts_count += 1
     return True

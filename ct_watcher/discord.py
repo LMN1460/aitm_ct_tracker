@@ -225,13 +225,13 @@ def build_embed(
     email_status: Optional[str] = None,
     email_status_state: Optional[str] = None,
     mailto_link: Optional[str] = None,
+    target_info: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Build Discord embed for alert."""
 
     # Extract hex ID and look up target info
     hex_id = extract_target_id(domain)
-    target_info = None
-    if hex_id in state.target_mapping:
+    if target_info is None and hex_id and hex_id in state.target_mapping:
         target_info = state.target_mapping[hex_id]
 
     # Calculate certificate freshness
@@ -391,15 +391,6 @@ def build_embed(
             }
         )
 
-    if EMAIL_ENABLED and email_status:
-        embed["fields"].append(
-            {
-                "name": "Email Status",
-                "value": email_status,
-                "inline": False,
-            }
-        )
-
     # Add all domains in code block
     embed["fields"].append(
         {
@@ -408,6 +399,15 @@ def build_embed(
             "inline": False,
         }
     )
+
+    if EMAIL_ENABLED and email_status:
+        embed["fields"].append(
+            {
+                "name": "Email Status",
+                "value": email_status,
+                "inline": False,
+            }
+        )
 
     # Add actions. Email and tweet links get separate fields to avoid 1024-char truncation.
     if EMAIL_ENABLED:
@@ -529,6 +529,7 @@ def send_discord_alert(
     email_status: Optional[str] = None,
     email_status_state: Optional[str] = None,
     extra_webhook_url: Optional[str] = None,
+    target_info: Optional[Dict[str, str]] = None,
 ) -> None:
     """Send alert to Discord webhook."""
     webhook_url = DISCORD_WEBHOOK
@@ -540,10 +541,8 @@ def send_discord_alert(
     mailto_url: Optional[str] = None
     omitted_count = 0
     if EMAIL_ENABLED and email_status_state != "sent":
-        hex_id = extract_target_id(domain)
-        target_info_for_mailto = state.target_mapping.get(hex_id) if hex_id else None
         mailto_url, omitted_count = generate_mailto_link(
-            target_info=target_info_for_mailto,
+            target_info=target_info,
             domain=domain,
             all_domains=all_domains,
             non_cdn_ips=non_cdn_ips,
@@ -564,6 +563,7 @@ def send_discord_alert(
         email_status,
         email_status_state=email_status_state,
         mailto_link=mailto_url,
+        target_info=target_info,
     )
 
     payload: Dict[str, Any] = {"embeds": [embed]}
