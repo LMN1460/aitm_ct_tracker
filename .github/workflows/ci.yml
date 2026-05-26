@@ -31,6 +31,9 @@ jobs:
   test:
     name: Test (pytest)
     runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK: http://localhost
+      CERTSTREAM_WS_URL: ws://localhost
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
