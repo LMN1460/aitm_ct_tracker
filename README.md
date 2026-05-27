@@ -64,3 +64,24 @@ mailto links embedded in Discord alerts.
 3. (Optional) Set `AUTOMATED_EMAIL_DISCLAIMER` in your `.env` to append a
    footer to every automated SMTP email. A default disclaimer is used if
    not set.
+
+## Testing
+
+### Unit tests
+```bash
+python -m pytest tests/ -v
+```
+
+### Integration tests (optional)
+These send real alerts to verify delivery. Skipped in CI by default.
+
+```bash
+# Set your test webhook/Apprise URLs
+export TEST_DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
+export TEST_APPRISE_URL="discord://webhook_id/webhook_token"
+
+# Run integration tests
+python -m pytest tests/test_integration_alerts.py -v
+```
+
+Apprise supports 80+ notification services. See [Apprise docs](https://github.com/caronc/apprise#supported-notifications) for URL formats.
