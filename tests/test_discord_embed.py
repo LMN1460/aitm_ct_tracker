@@ -56,6 +56,7 @@ class TestDiscordTargetResolution:
     def test_target_info_from_state_lookup(self):
         """api-ID in matched domain, target found in state.target_mapping."""
         from ct_watcher import state
+
         original = state.state.target_mapping.copy()
         try:
             state.state.target_mapping = SAMPLE_TARGET_MAPPING
@@ -73,6 +74,7 @@ class TestDiscordTargetResolution:
     def test_unknown_target_hex_id(self):
         """api-ID in matched domain but not in target_mapping."""
         from ct_watcher import state
+
         original = state.state.target_mapping.copy()
         try:
             state.state.target_mapping = {}
