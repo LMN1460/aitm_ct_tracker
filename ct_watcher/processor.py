@@ -12,7 +12,10 @@ from .config import (
     ALERTED_CERTIFICATES_LIMIT,
     MAX_CERT_AGE_SECONDS,
     HIGH_CONFIDENCE_REGISTRARS,
+    DISCORD_WEBHOOK,
     DISCORD_WEBHOOK_WATCHED,
+    APPRISE_URLS,
+    APPRISE_URLS_WATCHED,
 )
 from .state import state
 from .domain_checks import is_known_attacker_domain, get_nameservers, get_domain_info
@@ -22,6 +25,7 @@ from .ip_tracking import (
     track_resolved_ips,
 )
 from .discord import send_discord_alert
+from .apprise import send_apprise_alert
 from .email_sender import send_automated_target_email
 from .utils import extract_target_id, is_common_word_id
 
@@ -44,6 +48,71 @@ def _print_stats() -> None:
             f" in the last minute | Total alerts: {state.total_alerts_count}"
         )
         state.reset_stats()
+
+
+def _dispatch_alert(
+    domain: str,
+    all_domains: List[str],
+    not_before: float | None,
+    is_known_attacker: bool,
+    registrar: str | None,
+    is_cloudflare: bool,
+    nameservers_list: List[str] | None,
+    all_ips: List[str] | None,
+    non_cdn_ips: List[str] | None,
+    confirmed_attacker_ip_matches: List[str] | None,
+    reg_date: str | None,
+    email_status_details: str,
+    email_status_state: str,
+    target_info: dict | None,
+    api_id: str | None,
+) -> None:
+    """Send alert to all configured notification channels (Discord and/or Apprise)."""
+    # Determine watched org channels
+    is_watched = api_id is not None and api_id in state.watched_org_ids
+    watched_discord = DISCORD_WEBHOOK_WATCHED if is_watched else None
+    watched_apprise = None
+    if is_watched and APPRISE_URLS_WATCHED:
+        watched_apprise = [u.strip() for u in APPRISE_URLS_WATCHED.split(",") if u.strip()]
+
+    # Discord
+    if DISCORD_WEBHOOK:
+        send_discord_alert(
+            domain,
+            all_domains,
+            cert_timestamp=not_before,
+            is_known_attacker=is_known_attacker,
+            registrar=registrar,
+            is_cloudflare=is_cloudflare,
+            nameservers=nameservers_list,
+            all_ips=all_ips,
+            non_cdn_ips=non_cdn_ips,
+            confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
+            reg_date=reg_date,
+            email_status=email_status_details,
+            email_status_state=email_status_state,
+            extra_webhook_url=watched_discord,
+            target_info=target_info,
+        )
+
+    # Apprise
+    if APPRISE_URLS or watched_apprise:
+        send_apprise_alert(
+            domain,
+            all_domains,
+            cert_timestamp=not_before,
+            is_known_attacker=is_known_attacker,
+            registrar=registrar,
+            is_cloudflare=is_cloudflare,
+            nameservers=nameservers_list,
+            all_ips=all_ips,
+            non_cdn_ips=non_cdn_ips,
+            confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
+            reg_date=reg_date,
+            email_status=email_status_details,
+            target_info=target_info,
+            extra_urls=watched_apprise,
+        )
 
 
 def _handle_known_attacker(
@@ -95,24 +164,22 @@ def _handle_known_attacker(
         api_id=api_id,
     )
 
-    watched_webhook = DISCORD_WEBHOOK_WATCHED if api_id in state.watched_org_ids else None
-
-    send_discord_alert(
-        domain,
-        all_domains,
-        cert_timestamp=not_before,
+    _dispatch_alert(
+        domain=domain,
+        all_domains=all_domains,
+        not_before=not_before,
         is_known_attacker=True,
         registrar=registrar,
         is_cloudflare=is_cloudflare,
-        nameservers=nameservers_list,
+        nameservers_list=nameservers_list,
         all_ips=all_ips,
         non_cdn_ips=non_cdn_ips,
         confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
         reg_date=reg_date,
-        email_status=email_status.details,
+        email_status_details=email_status.details,
         email_status_state=email_status.state,
-        extra_webhook_url=watched_webhook,
         target_info=target_info,
+        api_id=api_id,
     )
     state.total_alerts_count += 1
     return True
@@ -203,22 +270,22 @@ def _handle_pattern_match(
         api_id=api_id,
     )
 
-    watched_webhook = DISCORD_WEBHOOK_WATCHED if api_id in state.watched_org_ids else None
-    send_discord_alert(
-        domain,
-        all_domains,
-        cert_timestamp=not_before,
+    _dispatch_alert(
+        domain=domain,
+        all_domains=all_domains,
+        not_before=not_before,
         is_known_attacker=False,
         registrar=registrar,
         is_cloudflare=is_cloudflare,
-        nameservers=nameservers_list,
+        nameservers_list=nameservers_list,
         all_ips=all_ips,
         non_cdn_ips=non_cdn_ips,
         confirmed_attacker_ip_matches=confirmed_attacker_ip_matches,
         reg_date=reg_date,
-        email_status=email_status.details,
+        email_status_details=email_status.details,
         email_status_state=email_status.state,
-        extra_webhook_url=watched_webhook,
+        target_info=target_info,
+        api_id=api_id,
     )
     state.total_alerts_count += 1
     return True

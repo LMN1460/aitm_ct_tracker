@@ -1,6 +1,7 @@
 """Utility functions for CT Watcher."""
 
 import re
+import time
 
 from .config import COMMON_WORDS_5CHAR, COMMON_WORDS_8CHAR
 
@@ -54,3 +55,27 @@ def get_base_domain(domain: str) -> str:
     if len(parts) >= 2:
         return ".".join(parts[-2:])
     return domain
+
+
+def calculate_freshness(cert_timestamp: float | None, fmt: str = "discord") -> str:
+    """Calculate certificate freshness string.
+
+    Args:
+        cert_timestamp: Unix timestamp of certificate not_before, or None.
+        fmt: Output format — "discord" for <t:unix:R>, "plain" for human-readable text.
+
+    Returns:
+        Formatted freshness string, or "Unknown" if timestamp is None.
+    """
+    if cert_timestamp is None:
+        return "Unknown"
+
+    if fmt == "discord":
+        return f"<t:{int(cert_timestamp)}:R>"
+
+    age_seconds = int(max(0, time.time() - cert_timestamp))
+    if age_seconds < 60:
+        return f"{age_seconds} seconds"
+    if age_seconds < 3600:
+        return f"{age_seconds // 60} minutes"
+    return f"{age_seconds // 3600} hours"

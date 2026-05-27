@@ -8,7 +8,7 @@ from urllib.parse import quote, urlencode
 
 from .config import DISCORD_WEBHOOK, EMAIL_ENABLED, EMAIL_SUBJECT
 from .state import state
-from .utils import defang_domain, extract_target_id
+from .utils import defang_domain, extract_target_id, calculate_freshness
 
 
 # Discord embed hard limits
@@ -235,9 +235,7 @@ def build_embed(
         target_info = state.target_mapping[hex_id]
 
     # Calculate certificate freshness using Discord relative timestamp
-    freshness_str = "Unknown"
-    if cert_timestamp:
-        freshness_str = f"<t:{int(cert_timestamp)}:R>"
+    freshness_str = calculate_freshness(cert_timestamp, fmt="discord")
 
     # Defang domains and format as code block
     defanged_domains = [defang_domain(d) for d in all_domains]
@@ -449,9 +447,7 @@ def _build_minimal_embed(
     reg_date: Optional[str],
 ) -> Dict[str, Any]:
     """Build a compact fallback embed when Discord rejects the full payload."""
-    freshness = "Unknown"
-    if cert_timestamp:
-        freshness = f"<t:{int(cert_timestamp)}:R>"
+    freshness = calculate_freshness(cert_timestamp, fmt="discord")
 
     fields = [
         {

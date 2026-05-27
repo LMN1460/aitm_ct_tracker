@@ -29,13 +29,22 @@ def _parse_int_env(name: str, default: int) -> int:
 # Load environment variables
 load_dotenv()
 
-# Discord webhook URL (required)
+# Discord webhook URL (optional — at least one of DISCORD_WEBHOOK or APPRISE_URLS must be set)
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
-if not DISCORD_WEBHOOK:
-    raise RuntimeError("DISCORD_WEBHOOK is not set in the environment or .env file")
 
 # Optional secondary webhook for watched organizations
 DISCORD_WEBHOOK_WATCHED = os.environ.get("DISCORD_WEBHOOK_WATCHED")
+
+# Apprise URLs for multi-service notifications (optional — comma-separated)
+APPRISE_URLS = os.environ.get("APPRISE_URLS")
+APPRISE_URLS_WATCHED = os.environ.get("APPRISE_URLS_WATCHED")
+
+# Validate: at least one notification channel must be configured
+if not DISCORD_WEBHOOK and not APPRISE_URLS:
+    raise RuntimeError(
+        "Neither DISCORD_WEBHOOK nor APPRISE_URLS is set. "
+        "At least one notification channel must be configured."
+    )
 
 # Master kill-switch for all email functionality (mailto links, SMTP status, automated emails)
 EMAIL_ENABLED = _parse_bool_env("EMAIL_ENABLED", True)

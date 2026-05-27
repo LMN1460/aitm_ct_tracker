@@ -5,3 +5,4 @@ whoisit==4.0.3
 pytest>=8.0
 dnspython[doh]>=2.6.0
 ruff>=0.15
+apprise>=1.9
