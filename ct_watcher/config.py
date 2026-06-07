@@ -80,6 +80,7 @@ HIGH_CONFIDENCE_REGISTRARS = frozenset(
     [
         "godaddy",
         "namecheap",
+        "dynadot",
     ]
 )
 
