@@ -75,14 +75,6 @@ EMAIL_SUBJECT = os.environ.get(
     "[Threat Intel] Phishing infrastructure detected targeting {TARGET_NAME}",
 )
 
-# Registrars that indicate high confidence (commonly used by attackers)
-HIGH_CONFIDENCE_REGISTRARS = frozenset(
-    [
-        "godaddy",
-        "namecheap",
-        "dynadot",
-    ]
-)
 
 # Domain pattern matching
 # Match api-<ID>. where:

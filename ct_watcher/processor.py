@@ -11,7 +11,6 @@ from .config import (
     ALERTED_DOMAINS_LIMIT,
     ALERTED_CERTIFICATES_LIMIT,
     MAX_CERT_AGE_SECONDS,
-    HIGH_CONFIDENCE_REGISTRARS,
     DISCORD_WEBHOOK,
     DISCORD_WEBHOOK_WATCHED,
     APPRISE_URLS,
@@ -29,13 +28,6 @@ from .apprise import send_apprise_alert
 from .email_sender import send_automated_target_email
 from .utils import extract_target_id, is_common_word_id
 
-
-def _is_high_confidence_registrar(registrar: str | None) -> bool:
-    """Check if the registrar is in the high-confidence list."""
-    if not registrar:
-        return False
-    registrar_lower = registrar.lower()
-    return any(hc in registrar_lower for hc in HIGH_CONFIDENCE_REGISTRARS)
 
 
 def _print_stats() -> None:
@@ -214,21 +206,19 @@ def _handle_pattern_match(
     # Determine confidence level
     # High confidence only if:
     # 1. The extracted ID matches a known target (in target_mapping), OR
-    # 2. Registrar is GoDaddy/Namecheap AND Cloudflare nameservers AND
-    #    multiple domains AND 8-char hex ID
+    # 2. Cloudflare nameservers AND multiple domains AND 8-char hex ID
     #
     # Unknown 5-char alphanumeric IDs are always low confidence to avoid
     # alert fatigue
     api_id = extract_target_id(domain)
     is_known_target = api_id in state.target_mapping
-    is_suspicious_registrar = _is_high_confidence_registrar(registrar)
     is_8char_hex = api_id and len(api_id) == 8 and all(c in "0123456789abcdef" for c in api_id)
 
     # High confidence requires known target OR a suspicious infra pattern OR a confirmed IP match.
     has_confirmed_attacker_ip_match = bool(confirmed_attacker_ip_matches)
     high_confidence = bool(
         is_known_target
-        or (is_suspicious_registrar and is_cloudflare and len(all_domains) > 1 and is_8char_hex)
+        or (is_cloudflare and len(all_domains) > 1 and is_8char_hex)
         or has_confirmed_attacker_ip_match
     )
 
@@ -253,8 +243,8 @@ def _handle_pattern_match(
             f"    -> Escalated to HIGH via known attacker IP match:"
             f" {', '.join(confirmed_attacker_ip_matches)}"
         )
-    elif is_suspicious_registrar and is_cloudflare:
-        print(f"    -> Suspicious pattern: {registrar} + Cloudflare nameservers")
+    elif is_cloudflare and is_8char_hex:
+        print(f"    -> 8-char hex + Cloudflare nameservers")
 
     with state.lock:
         if len(state.alerted_certificates) > ALERTED_CERTIFICATES_LIMIT:
