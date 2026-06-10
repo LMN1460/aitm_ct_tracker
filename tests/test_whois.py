@@ -25,6 +25,7 @@ def _load_fixture(name):
 
 # --- fixtures ---
 
+
 @pytest.fixture(autouse=True)
 def clear_whois_cache():
     whois_module._whois_server_cache.clear()
@@ -33,6 +34,7 @@ def clear_whois_cache():
 
 
 # --- date normalization tests ---
+
 
 class TestNormalizeDate:
     def test_iso_date(self):
@@ -55,6 +57,7 @@ class TestNormalizeDate:
 
 
 # --- parsing tests ---
+
 
 class TestWhoisParsing:
     def test_verisign_format(self):
@@ -131,6 +134,7 @@ class TestWhoisParsing:
 
 # --- server discovery tests ---
 
+
 class TestWhoisServerDiscovery:
     def test_extracts_server_from_iana_response(self):
         with patch.object(
@@ -153,6 +157,7 @@ class TestWhoisServerDiscovery:
 
 
 # --- integration test ---
+
 
 class TestWhoisLookup:
     def test_full_lookup_verisign(self):

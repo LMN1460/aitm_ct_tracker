@@ -37,6 +37,7 @@ def _make_response(status_code: int = 200, json_data=None):
 
 # --- pytest fixtures ---
 
+
 @pytest.fixture(autouse=True)
 def clear_rdap_cache():
     """Clear domain cache before and after every test."""
@@ -56,12 +57,15 @@ def verisign_bootstrap():
 @pytest.fixture
 def mock_response():
     """Return a factory for MagicMock responses."""
+
     def _factory(status_code: int = 200, json_data=None):
         return _make_response(status_code, json_data)
+
     return _factory
 
 
 # --- parsing tests ---
+
 
 class TestRegistrarParsing:
     def test_vcard_array(self):
@@ -69,11 +73,7 @@ class TestRegistrarParsing:
         assert _parse_registrar(data) == "MarkMonitor Inc."
 
     def test_fn_direct_fallback(self):
-        data = {
-            "entities": [
-                {"roles": ["registrar"], "fn": "SomeRegistrar LLC"}
-            ]
-        }
+        data = {"entities": [{"roles": ["registrar"], "fn": "SomeRegistrar LLC"}]}
         assert _parse_registrar(data) == "SomeRegistrar LLC"
 
     def test_no_registrar_entity(self):
@@ -106,8 +106,12 @@ class TestIANABootstrap:
 class TestOverrides:
     def test_override_takes_priority(self):
         with patch.object(rdap_module, "_overrides_cache", None):
-            with patch.object(rdap_module, "_load_overrides", return_value={"zz": "https://rdap.example/"}):
-                with patch.object(rdap_module, "_load_iana_bootstrap", return_value={"zz": "https://rdap.other/"}):
+            with patch.object(
+                rdap_module, "_load_overrides", return_value={"zz": "https://rdap.example/"}
+            ):
+                with patch.object(
+                    rdap_module, "_load_iana_bootstrap", return_value={"zz": "https://rdap.other/"}
+                ):
                     assert _get_rdap_server("zz") == "https://rdap.example/"
 
     def test_falls_back_to_iana(self):
@@ -120,6 +124,7 @@ class TestOverrides:
 
 
 # --- integration tests ---
+
 
 class TestDomainLookup:
     def test_second_lookup_reads_cache(self, verisign_bootstrap, mock_response):
@@ -153,11 +158,12 @@ class TestDomainLookup:
         assert d is None
 
     def test_no_known_server_returns_none(self):
-        with patch.object(rdap_module, "_overrides_cache", None), \
-             patch.object(rdap_module, "_load_iana_bootstrap", return_value={"com": _COM_RDAP}), \
-             patch.object(rdap_module, "_load_overrides", return_value={}), \
-             patch("ct_watcher.rdap.whois_lookup", return_value=(None, None)) as mock_whois:
-
+        with (
+            patch.object(rdap_module, "_overrides_cache", None),
+            patch.object(rdap_module, "_load_iana_bootstrap", return_value={"com": _COM_RDAP}),
+            patch.object(rdap_module, "_load_overrides", return_value={}),
+            patch("ct_watcher.rdap.whois_lookup", return_value=(None, None)) as mock_whois,
+        ):
             r, d = get_domain_info("example.tk")
 
         assert r is None

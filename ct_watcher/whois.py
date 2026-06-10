@@ -44,9 +44,18 @@ _REGISTRAR_URL_RE = re.compile(r"\s*\(\s*https?://[^)]+\)\s*$")
 
 # month-name to number for non-standard date formats
 _MONTH_MAP = {
-    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
-    "may": "05", "jun": "06", "jul": "07", "aug": "08",
-    "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+    "jan": "01",
+    "feb": "02",
+    "mar": "03",
+    "apr": "04",
+    "may": "05",
+    "jun": "06",
+    "jul": "07",
+    "aug": "08",
+    "sep": "09",
+    "oct": "10",
+    "nov": "11",
+    "dec": "12",
 }
 
 # TLDs that need a prefix before the domain in the WHOIS query
@@ -166,10 +175,7 @@ def whois_lookup(base_domain: str) -> Tuple[Optional[str], Optional[str]]:
     tld = base_domain.rsplit(".", 1)[-1]
     server = _get_whois_server(tld)
     if not server:
-        print(
-            f"[~] WHOIS lookup failed for {base_domain} "
-            f"(no WHOIS server known for TLD \"{tld}\")"
-        )
+        print(f'[~] WHOIS lookup failed for {base_domain} (no WHOIS server known for TLD "{tld}")')
         return (None, None)
 
     try:
