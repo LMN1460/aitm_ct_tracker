@@ -84,7 +84,7 @@ class TestRegistrarParsing:
 class TestRegDateParsing:
     def test_registration_date(self):
         data = _load_fixture("rdap_google_com.json")
-        assert _parse_reg_date(data) == "1997-09-15"
+        assert _parse_reg_date(data) == "1997-09-15T04:00:00Z"
 
     def test_no_registration_event(self):
         assert _parse_reg_date({"events": []}) is None
@@ -131,7 +131,7 @@ class TestDomainLookup:
             r2, d2 = get_domain_info("api-abc.google.com")
 
         assert r1 == "MarkMonitor Inc."
-        assert d1 == "1997-09-15"
+        assert d1 == "1997-09-15T04:00:00Z"
         assert r2 == r1
         assert d2 == d1
         assert mock_get.call_count == 1
@@ -153,10 +153,13 @@ class TestDomainLookup:
         assert d is None
 
     def test_no_known_server_returns_none(self):
-        with patch.object(rdap_module, "_overrides_cache", None):
-            with patch.object(rdap_module, "_load_iana_bootstrap", return_value={"com": _COM_RDAP}):
-                with patch.object(rdap_module, "_load_overrides", return_value={}):
-                    r, d = get_domain_info("example.tk")
+        with patch.object(rdap_module, "_overrides_cache", None), \
+             patch.object(rdap_module, "_load_iana_bootstrap", return_value={"com": _COM_RDAP}), \
+             patch.object(rdap_module, "_load_overrides", return_value={}), \
+             patch("ct_watcher.rdap.whois_lookup", return_value=(None, None)) as mock_whois:
+
+            r, d = get_domain_info("example.tk")
 
         assert r is None
         assert d is None
+        mock_whois.assert_called_once_with("example.tk")

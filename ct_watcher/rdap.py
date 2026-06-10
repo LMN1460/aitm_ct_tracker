@@ -11,16 +11,18 @@ servers but aren't registered with IANA yet.
 
 import json
 import os
+import tempfile
 import time
 from typing import Dict, Optional, Tuple
 
 import requests
 
 from .utils import get_base_domain
+from .whois import whois_lookup
 
 # --- constants ---
 _OVERRIDES_FILE = os.path.join(os.path.dirname(__file__), "rdap_overrides.json")
-_BOOTSTRAP_FILE = "/tmp/ct_tracker_iana_rdap.json"
+_BOOTSTRAP_FILE = os.path.join(tempfile.gettempdir(), "ct_tracker_iana_rdap.json")
 _BOOTSTRAP_TTL = 86400  # refresh IANA bootstrap every 24h
 _REQUEST_TIMEOUT = 5
 _CACHE_TTL = 3600  # 1h per-domain cache
@@ -139,11 +141,11 @@ def _parse_registrar(data: dict) -> Optional[str]:
 
 
 def _parse_reg_date(data: dict) -> Optional[str]:
-    """Extract registration date (YYYY-MM-DD) from RDAP events."""
+    """Extract registration date (ISO 8601) from RDAP events."""
     for event in data.get("events", []):
         if event.get("eventAction") == "registration":
             date_str = event.get("eventDate", "")
-            return date_str[:10] if date_str else None
+            return date_str if date_str else None
     return None
 
 
@@ -182,21 +184,20 @@ def _get_cached(base_domain: str) -> Optional[Tuple[Optional[str], Optional[str]
 
 
 def _lookup_domain(base_domain: str) -> Tuple[Optional[str], Optional[str]]:
-    """Resolve TLD → RDAP server → query → parse. Returns (registrar, reg_date)."""
+    """Resolve TLD → RDAP server → query → parse, with WHOIS fallback.
+
+    WHOIS is only used when the TLD has no known RDAP server.
+    For TLDs with RDAP, a transient failure (404, timeout) returns (None, None).
+    """
     tld = base_domain.rsplit(".", 1)[-1]
     server = _get_rdap_server(tld)
-    if not server:
-        print(
-            f"[~] RDAP lookup failed for {base_domain} "
-            f"(no known endpoint for TLD \"{tld}\")"
-        )
+    if server:
+        data = _query_rdap_server(base_domain, server)
+        if data is not None:
+            return (_parse_registrar(data), _parse_reg_date(data))
         return (None, None)
 
-    data = _query_rdap_server(base_domain, server)
-    if data is None:
-        return (None, None)
-
-    return (_parse_registrar(data), _parse_reg_date(data))
+    return whois_lookup(base_domain)
 
 
 def get_domain_info(domain: str) -> Tuple[Optional[str], Optional[str]]:

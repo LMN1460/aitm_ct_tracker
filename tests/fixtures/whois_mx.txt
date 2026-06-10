@@ -1,0 +1,20 @@
+
+Domain Name:       google.mx
+
+Created On:        2009-05-12
+Expiration Date:   2027-05-11
+Last Updated On:   2026-04-12
+Registrar:         Markmonitor
+URL:               http://www.markmonitor.com/
+
+Registrant:
+   Name:           DNS Admin
+   City:           Mountain View
+   State:          California
+   Country:        United States
+
+Administrative Contact:
+   Name:           DNS Admin
+   City:           Mountain View
+   State:          California
+   Country:        United States
