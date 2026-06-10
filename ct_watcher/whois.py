@@ -18,20 +18,22 @@ _IANA_WHOIS_RE = re.compile(r"whois:\s+(\S+)")
 
 # regex patterns for extracting registrar name (case-insensitive, multiline)
 _REGISTRAR_RES = [
-    re.compile(r"^\s*registrar:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*registrar name:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*sponsoring registrar:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*registrar:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*registrar name:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*sponsoring registrar:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    # fallback: some registries put the name on the next line (e.g. .eu)
+    re.compile(r"^[ \t]*name:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
 ]
 
 # regex patterns for extracting creation date
 _CREATION_RES = [
-    re.compile(r"^\s*creation date:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*created:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*created on[\s.:]*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*registered on:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*registered:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*registered\s+date[\s:]+(.+)$", re.IGNORECASE | re.MULTILINE),
-    re.compile(r"^\s*registration time:\s*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*creation date:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*created:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*created on[\s.:]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*registered on:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*registered:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*registered[ \t]+date[\s:]+(.+)$", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"^[ \t]*registration time:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE),
     # .jp uses bracket-delimited Japanese labels: [登録年月日]  2006/05/09
     re.compile(r"登録年月日\]\s*(\d{4}/\d{2}/\d{2})"),
 ]
@@ -142,7 +144,8 @@ def _parse_whois(raw: str) -> Tuple[Optional[str], Optional[str]]:
         if match:
             registrar = match.group(1).strip()
             registrar = _REGISTRAR_URL_RE.sub("", registrar)
-            break
+            if registrar:
+                break
 
     reg_date = None
     for pattern in _CREATION_RES:

@@ -122,6 +122,12 @@ class TestWhoisParsing:
         _registrar, reg_date = _parse_whois(raw)
         assert reg_date == "2001-08-23"
 
+    def test_eu_multi_line_registrar(self):
+        raw = _load_fixture("whois_eurid_eu.txt")
+        registrar, reg_date = _parse_whois(raw)
+        assert registrar == "ClearMedia NV"
+        assert reg_date is None
+
 
 # --- server discovery tests ---
 
