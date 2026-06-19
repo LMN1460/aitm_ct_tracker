@@ -57,6 +57,8 @@ class TestDomainRegex:
             "api-test.huaweiclouds.example.com",
             "api-test.multi.software",
             "api-test.upsolver.com",
+            "api-test.ondigitalocean.com",
+            "api-9b1fceb8.mongo.ondigitalocean.com",
         ],
     )
     def test_rejects_cloud_saas(self, domain):
